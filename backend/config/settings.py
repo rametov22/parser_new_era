@@ -28,7 +28,7 @@ sys.path.append(os.path.join(BASE_DIR, "apps"))
 SECRET_KEY = config("DJANGO_SECRET_KEY", default=get_random_secret_key())
 DEBUG = config("DJANGO_DEBUG", cast=bool, default=True)
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ["*"]
 
 
 # Application definition

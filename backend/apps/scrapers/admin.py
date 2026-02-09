@@ -15,6 +15,7 @@ class YtConnectContentAdmin(admin.ModelAdmin):
 class ScraperLogAdmin(admin.ModelAdmin):
     list_display = ("task_name", "status", "created_at")
     list_filter = ("status",)
+    readonly_fields = ("created_at",)
     search_fields = ("task_name",)
 
 

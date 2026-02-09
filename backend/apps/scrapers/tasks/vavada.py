@@ -1,4 +1,6 @@
 import re
+import logging
+import psutil
 from celery import shared_task
 from django.utils import timezone
 from datetime import timedelta
@@ -12,6 +14,20 @@ from selenium.webdriver.support.ui import WebDriverWait
 from bs4 import BeautifulSoup
 
 from ..models import ContentAppContent, ScraperLog
+
+
+logging.getLogger("selenium").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+
+logger = logging.getLogger("vavada_parser")
+logger.setLevel(logging.INFO)
+
+formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s", "%H:%M:%S")
+
+stream_handler = logging.StreamHandler()
+stream_handler.setFormatter(formatter)
+logger.addHandler(stream_handler)
+
 
 PROXIES = [
     "91.243.188.143:7951:ingp3040902:xB4pki06bZ",
@@ -48,6 +64,15 @@ PROXIES = [
 #     return driver
 
 
+def get_chrome_count():
+    """Считает активные процессы Chrome для контроля ресурсов"""
+    return sum(
+        1
+        for proc in psutil.process_iter(["name"])
+        if proc.info["name"] and "chrome" in proc.info["name"].lower()
+    )
+
+
 def create_driver():
     """Создает драйвер, подключаясь к удаленному браузеру или локальному"""
 
@@ -65,16 +90,23 @@ def create_driver():
     options.add_argument(f"user-agent={random_user_agent}")
     options.add_argument("--headless=new")  # В докере только headless
     options.add_argument("--no-sandbox")
-
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
+
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
 
     service = Service(executable_path="/usr/bin/chromedriver")
-
     driver = webdriver.Chrome(service=service, options=options)
+
+    driver.execute_cdp_cmd(
+        "Page.addScriptToEvaluateOnNewDocument",
+        {
+            "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+        },
+    )
+
     return driver
 
 
@@ -112,6 +144,7 @@ def spawn_iframe_parsers():
 def parse_single_iframe(self, kp_id):
     """Парсинг одного конкретного фильма через Selenium"""
     driver = None
+    start_time = timezone.now()
     try:
         film = ContentAppContent.objects.get(kino_poisk_id=kp_id)
         driver = create_driver()
@@ -247,14 +280,23 @@ def parse_single_iframe(self, kp_id):
             ]
         )
 
+        exec_time = (timezone.now() - start_time).total_seconds()
+        logger.info(
+            f"✅ {kp_id} | {exec_time}s | Tracks: {len(filtered_audio_tracks)} | "
+            f"S:{film.last_season or 0} E:{film.last_episode or 0} | IDs: {film.player_id} | Ch:{get_chrome_count()}"
+        )
+
         ScraperLog.objects.create(
             task_name=f"Vavada parser {kp_id}",
             status="success",
             message="Плеер и дорожки обновлены",
         )
-        return f"Success: {kp_id}"
+        return kp_id
 
     except Exception as exc:
+        error_msg = str(exc).split("\n")[0][:50]
+        logger.error(f"❌ {kp_id} | FAILED | Error: {error_msg}")
+
         if driver:
             driver.quit()
         ScraperLog.objects.create(

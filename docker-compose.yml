@@ -20,8 +20,8 @@ x-backend-defaults: &backend-defaults
 services:
   backend:
     <<: *backend-defaults
-    expose:
-      - 8000
+    ports:
+      - 22022:8000
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8000/healthcheck/ || exit 1"]
       interval: 30s

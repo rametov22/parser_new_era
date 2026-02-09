@@ -1,0 +1,23 @@
+x-backend-defaults: &backend-defaults
+  build:
+    context: ./
+    dockerfile: .devcontainer/backend/Dockerfile
+  restart: unless-stopped
+
+services:
+  backend:
+    <<: *backend-defaults
+    volumes:
+      - ./backend:/app
+      - vscode-data:/root/.vscode-server
+      - vscode-cache:/root/.cache
+
+    command: sleep infinity
+    healthcheck:
+      test: [ "CMD-SHELL", "exit 0" ]
+    ports:
+      - 8000:8000
+
+volumes:
+  vscode-data:
+  vscode-cache:

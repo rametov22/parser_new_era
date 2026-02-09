@@ -1,0 +1,9 @@
+__pycache__
+*.pyc
+.env
+dumps/
+backend/static/
+backend/media/
+backend/celerybeat-schedule
+backend/celerybeat-schedule-shm
+backend/celerybeat-schedule-wal

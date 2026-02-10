@@ -1,6 +1,7 @@
 import re
 import logging
 import psutil
+from django.conf import settings
 from celery import shared_task
 from django.utils import timezone
 from datetime import timedelta
@@ -114,7 +115,7 @@ def create_driver():
 def spawn_iframe_parsers():
     """Диспетчер: находит фильмы без контента и ставит их в очередь Celery"""
     today = timezone.now().date()
-    start_date = today - timedelta(days=180)
+    start_date = today - timedelta(days=settings.PREMIERE)
     cut_date = today - timedelta(days=4)
 
     date_filter = Q(premiere__range=(start_date, today)) | Q(

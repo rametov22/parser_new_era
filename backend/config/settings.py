@@ -148,6 +148,8 @@ CELERY_TASK_ROUTES = {
     "scrapers.tasks.spawn_iframe_parsers": {"queue": "default"},
 }
 
+PREMIERE = config("premiere", cast=int, default=40)
+
 # Internationalization
 # https://docs.djangoproject.com/en/6.0/topics/i18n/
 

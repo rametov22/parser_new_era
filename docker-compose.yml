@@ -45,6 +45,21 @@ services:
       redis:
         condition: service_healthy
 
+  celery_kp_pages:
+    <<: *backend-defaults
+    command: celery -A config worker -Q kp_pages_queue --concurrency=2 -n kp_pages_worker@%h -l info
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  celery_kp_films:
+    <<: *backend-defaults
+    # command: celery -A config worker -Q kp_films_queue --concurrency=10 -n kp_films_worker@%h -l info
+    command: "sleep infinity"
+    depends_on:
+      redis:
+        condition: service_healthy
+
   celery-beat:
     <<: *backend-defaults
     command: celery -A config beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler

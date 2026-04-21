@@ -17,6 +17,12 @@ services:
       test: [ "CMD-SHELL", "exit 0" ]
     ports:
       - 8000:8000
+  # selenium:
+  #   image: selenium/standalone-chrome:latest
+  #   platform: linux/amd64
+  #   ports:
+  #     - "4444:4444"
+  #     - "7900:7900"
 
 volumes:
   vscode-data:

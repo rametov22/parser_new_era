@@ -14,7 +14,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from bs4 import BeautifulSoup
 
-from ..models import ContentAppContent, ScraperLog
+from ..models import Content, ScraperLog
 
 
 logging.getLogger("selenium").setLevel(logging.WARNING)
@@ -123,9 +123,7 @@ def spawn_iframe_parsers():
     )
 
     films_to_update = (
-        ContentAppContent.objects.filter(
-            film_content__isnull=True, last_update__lte=cut_date
-        )
+        Content.objects.filter(film_content__isnull=True, last_update__lte=cut_date)
         .filter(date_filter)
         .values_list("kino_poisk_id", flat=True)
     )
@@ -147,7 +145,7 @@ def parse_single_iframe(self, kp_id):
     driver = None
     start_time = timezone.now()
     try:
-        film = ContentAppContent.objects.get(kino_poisk_id=kp_id)
+        film = Content.objects.get(kino_poisk_id=kp_id)
         driver = create_driver()
 
         # Логика из check_and_pars_iframe

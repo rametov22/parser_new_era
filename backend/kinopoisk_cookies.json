@@ -1,0 +1,210 @@
+[
+  {
+    "domain": ".kinopoisk.ru",
+    "expiry": 1802181508,
+    "httpOnly": false,
+    "name": "_ym_d",
+    "path": "/",
+    "sameSite": "Lax",
+    "secure": true,
+    "value": "1770645507"
+  },
+  {
+    "domain": ".kinopoisk.ru",
+    "expiry": 1805205501,
+    "httpOnly": false,
+    "name": "mda2_beacon",
+    "path": "/",
+    "sameSite": "None",
+    "secure": true,
+    "value": "1770645501312"
+  },
+  {
+    "domain": ".kinopoisk.ru",
+    "httpOnly": false,
+    "name": "ys",
+    "path": "/",
+    "sameSite": "None",
+    "secure": true,
+    "value": "c_chck.3541649808#udn.cDpyYW1ldG92MjI%3D"
+  },
+  {
+    "domain": ".kinopoisk.ru",
+    "expiry": 1805205501,
+    "httpOnly": true,
+    "name": "sessar",
+    "path": "/",
+    "sameSite": "None",
+    "secure": true,
+    "value": "1.1615350.CiBZXQotL9SM5HRhvo2baqK-GO0iccstIE5XwtymO5jFQQ.tOWwkd7ytZfOFEBvP-AOx3yeijQmcwwB12T7t9qh1Oc"
+  },
+  {
+    "domain": ".kinopoisk.ru",
+    "expiry": 1805205501,
+    "httpOnly": true,
+    "name": "ya_sess_id",
+    "path": "/",
+    "sameSite": "None",
+    "secure": true,
+    "value": "3:1770645501.5.0.1770645496855:cxieww:2266.1.2:1|1647840619.-1.2.3:1770645496|30:11703799.347012.XZWbL1kTBMM1TFl08cl81vWh4pU"
+  },
+  {
+    "domain": ".kinopoisk.ru",
+    "expiry": 1770717476,
+    "httpOnly": false,
+    "name": "_ym_isad",
+    "path": "/",
+    "sameSite": "None",
+    "secure": true,
+    "value": "2"
+  },
+  {
+    "domain": ".kinopoisk.ru",
+    "expiry": 1770731878,
+    "httpOnly": false,
+    "name": "no-re-reg-required",
+    "path": "/",
+    "sameSite": "Lax",
+    "secure": true,
+    "value": "1"
+  },
+  {
+    "domain": ".kinopoisk.ru",
+    "expiry": 1802181470,
+    "httpOnly": true,
+    "name": "yashr",
+    "path": "/",
+    "sameSite": "None",
+    "secure": true,
+    "value": "3240067001770645470"
+  },
+  {
+    "domain": ".kinopoisk.ru",
+    "expiry": 1770656301,
+    "httpOnly": false,
+    "name": "sso_status",
+    "path": "/",
+    "sameSite": "Lax",
+    "secure": false,
+    "value": "sso.passport.yandex.ru:synchronized"
+  },
+  {
+    "domain": ".kinopoisk.ru",
+    "expiry": 1771855105,
+    "httpOnly": false,
+    "name": "cycada",
+    "path": "/",
+    "sameSite": "None",
+    "secure": true,
+    "value": "APTg6pbg4DHI+6/lTkpxbsD6i/MFKammqg/YOIotKFE="
+  },
+  {
+    "domain": ".kinopoisk.ru",
+    "expiry": 1805205501,
+    "httpOnly": true,
+    "name": "i",
+    "path": "/",
+    "sameSite": "None",
+    "secure": true,
+    "value": "HWa7UiUPQ9jCgiLixm5/N0voX1TbBrCC0MT18j8bDslHVmjfkQyA0H59FTlntvm3uQ6HHhqeQxYuE1nXBZU6AaOQ/aE="
+  },
+  {
+    "domain": ".kinopoisk.ru",
+    "expiry": 1802181501,
+    "httpOnly": false,
+    "name": "yandex_login",
+    "path": "/",
+    "sameSite": "None",
+    "secure": true,
+    "value": "rametov22"
+  },
+  {
+    "domain": "www.kinopoisk.ru",
+    "httpOnly": true,
+    "name": "_csrf",
+    "path": "/",
+    "sameSite": "Lax",
+    "secure": false,
+    "value": "DCFzPA1dgNb19T5wouGLatx_"
+  },
+  {
+    "domain": ".kinopoisk.ru",
+    "expiry": 1805205501,
+    "httpOnly": false,
+    "name": "yandexuid",
+    "path": "/",
+    "sameSite": "None",
+    "secure": true,
+    "value": "5048075321770645473"
+  },
+  {
+    "domain": ".kinopoisk.ru",
+    "expiry": 1802181508,
+    "httpOnly": false,
+    "name": "_ym_uid",
+    "path": "/",
+    "sameSite": "Lax",
+    "secure": true,
+    "value": "1770645472236413589"
+  },
+  {
+    "domain": ".kinopoisk.ru",
+    "expiry": 1770649074,
+    "httpOnly": false,
+    "name": "disable_server_sso_redirect",
+    "path": "/",
+    "sameSite": "Lax",
+    "secure": false,
+    "value": "1"
+  },
+  {
+    "domain": ".kinopoisk.ru",
+    "expiry": 1805205474,
+    "httpOnly": false,
+    "name": "_yasc",
+    "path": "/",
+    "sameSite": "Lax",
+    "secure": true,
+    "value": "AUhzhGh3Apip4yMilLNdd00wv6u+ZalrBWS1O6auWKJxlmToMWlvtvtfZJ+uEM1QahztAUecWptx"
+  },
+  {
+    "domain": ".kinopoisk.ru",
+    "expiry": 1773237474,
+    "httpOnly": false,
+    "name": "spravka",
+    "path": "/",
+    "sameSite": "Lax",
+    "secure": false,
+    "value": "dD0xNzcwNjQ1NDc0O2k9MTk1LjE1OC4yNC4xMTU7RD1CRDI2MTI0OTdFQkM1NTVEMzY0OEFCRjc1NDZGQ0NERkVBQTc3QUFBMEJDNTgwNzg5QUQ5Nzc0OUE3Qzk4MDY2MTQ4MTI2RDBBMEY2RjQ1QUZCNTQyMTJEMzJGMkE1RDlCRDc5RjE2MzQwNzdDRTIyNjVFOEFBNkI1OTQxRjBGNUY4NkMxNDlFRDU1QTVENTE5MDY3MkVGMTNCMTQzMTIwO3U9MTc3MDY0NTQ3NDEwMDk5OTk2MjtoPTQ5ODI5OThhZGNmOTRkY2IyNTYyNTExMzExODE4MDFj"
+  },
+  {
+    "domain": ".kinopoisk.ru",
+    "expiry": 1770647273,
+    "httpOnly": false,
+    "name": "_ym_visorc",
+    "path": "/",
+    "sameSite": "None",
+    "secure": true,
+    "value": "b"
+  },
+  {
+    "domain": ".kinopoisk.ru",
+    "expiry": 1805205501,
+    "httpOnly": false,
+    "name": "L",
+    "path": "/",
+    "sameSite": "Lax",
+    "secure": false,
+    "value": "RQNnAEEDc3p7dlxeXmNFCm5+aWBQZXpeJTEsCCQlF1lc.1770645496.1697904.368142.9eb95735d349810da5d87fc5d86a5f07"
+  },
+  {
+    "domain": ".kinopoisk.ru",
+    "expiry": 1802181508,
+    "httpOnly": false,
+    "name": "gdpr",
+    "path": "/",
+    "sameSite": "None",
+    "secure": true,
+    "value": "0"
+  }
+]

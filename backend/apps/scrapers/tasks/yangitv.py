@@ -1,7 +1,7 @@
 import requests
 import time
 from celery import shared_task
-from ..models import YtConnectContent, ScraperLog, ContentAppContent
+from ..models import YtConnectContent, ScraperLog, Content
 import re
 from ..utils import parse_age
 from django.db import transaction
@@ -108,7 +108,7 @@ def connect_yt_content(self):
 
             name_ru = items["name_ru"]
             year = items["year"]
-            content_original = ContentAppContent.objects.filter(
+            content_original = Content.objects.filter(
                 name_ru=name_ru, year_production=year
             ).first()
 

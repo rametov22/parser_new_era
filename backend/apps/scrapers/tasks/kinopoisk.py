@@ -171,41 +171,22 @@ def parse_single_film_task(self, kp_id, href, cookies=None):
         time.sleep(2)
 
         soup = BeautifulSoup(driver.page_source, "lxml")
-        # print(soup)
         current_year = dt.datetime.now().year
-        print(current_year)
 
         content_obj = models.Content.objects.filter(kino_poisk_id=kp_id).first()
-        print(content_obj)
-
         is_new_record = content_obj is None
-        print(is_new_record)
 
         name_ru, name_original, short_desc, age = parse_header_info(soup)
-        print(
-            f"name_ru {name_ru}, name_original {name_original}, short_desc {short_desc}"
-        )
         description = get_description(soup)
-        print("description", description)
         trailer_link = get_trailer(soup)
-        print(trailer_link)
         is_serial = get_is_serial(soup)
-        print(is_serial)
         premiere, premiere_ru = get_premiere(soup, kp_id)
-        print(premiere, premiere_ru)
         year_production = parse_year_production(soup)
-        print(year_production)
         slogan = parse_slogan(soup)
-        print(slogan)
         kp_rating, imdb_rating, sequel_list = get_ratings_and_sequels(soup)
-        print(kp_rating, imdb_rating)
         poster_url = parse_poster(soup)
-        print(poster_url)
-
-        print(4)
 
         if is_new_record:
-            print(6)
             content_obj = models.Content(
                 kino_poisk_id=kp_id,
                 is_serial=is_serial,
@@ -219,22 +200,17 @@ def parse_single_film_task(self, kp_id, href, cookies=None):
             content_obj.save(update_fields=("is_parsed_kp",))
 
         if is_new_record or (content_obj.year_production or 0) >= current_year - 8:
-            print(5)
             if content_obj.is_serial:
                 seasons_dict = parse_serial_seasons(
                     driver,
                     film_href,
                     additional_path_episodes,
                 )
-                print("seasons:", seasons_dict)
                 award_list = parse_awards(driver, film_href, additional_path_awards)
-                print("awards:", award_list)
                 save_serial_seasons(content_obj, seasons_dict, content_obj.is_serial)
                 save_awards(content_obj, award_list)
 
         if is_new_record or (content_obj.year_production or 0) >= current_year - 1:
-            print(6)
-            # parse
             # Нужно заменить collection и film details потому-что в пред запросе он остается на другой странице
             driver.get(film_href)
             time.sleep(2)
@@ -250,27 +226,12 @@ def parse_single_film_task(self, kp_id, href, cookies=None):
                 composers_list,
                 editors_list,
             ) = get_film_details(soup)
-            print("platform_id, platform_name:", platform_id, platform_name)
-            print("countries:", country_list)
-            print("genres:", genre_list)
-            print("directors:", directors_list)
-            print("screenwriters:", screenwriters_list)
-            print("producers:", producers_list)
-            print("operators:", operators_list)
-            print("composers:", composers_list)
-            print("editors:", editors_list)
             collection_list = parse_collections(driver)
-            print("collections:", collection_list)
             actors_list = parse_actors(driver, film_href, additional_path_actors)
-            print("actors:", actors_list)
             keyword_list = parse_keywords(driver, film_href, additional_path_keywords)
-            print("keywords:", keyword_list)
             studio_list = parse_studios(driver, film_href, additional_path_studio)
-            print("studios:", studio_list)
             like_list = parse_like_films(driver, film_href, additional_path_like)
-            print("like_films:", like_list)
             platform = attach_film_to_platform(platform_id, kp_id)
-            print("platform:", platform)
             # save
             save_country(content_obj, country_list)
             save_genre(content_obj, genre_list)

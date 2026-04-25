@@ -102,7 +102,7 @@ def start_global_parsing():
         driver.quit()
 
 
-@shared_task(bind=True)
+@shared_task(bind=True, queue="kp_pages_queue")
 def parse_page_list_task(self, page_number):
     with open("/app/kinopoisk_cookies.json", "r") as f:
         cookies = json.load(f)
@@ -149,7 +149,7 @@ def parse_page_list_task(self, page_number):
         driver.quit()
 
 
-@shared_task(bind=True, max_retries=None)
+@shared_task(bind=True, max_retries=None, queue="kp_films_queue")
 def parse_single_film_task(self, kp_id, href, cookies=None):
     if cookies is None:
         with open("/app/kinopoisk_cookies.json", "r") as f:

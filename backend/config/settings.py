@@ -178,13 +178,13 @@ CELERY_RESULT_BACKEND = f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/1"
 # --- НАСТРОЙКИ ОЧЕРЕДЕЙ (для разделения Concurrency) ---
 CELERY_TASK_DEFAULT_QUEUE = "default"
 CELERY_TASK_ROUTES = {
-    "scrapers.tasks.parse_single_iframe": {"queue": "vavada_queue"},
-    "scrapers.tasks.spawn_iframe_parsers": {"queue": "default"},
-    "scrapers.tasks.parse_page_list_task": {"queue": "kp_pages_queue"},
-    "scrapers.tasks.parse_single_film_task": {"queue": "kp_films_queue"},
-    "scrapers.tasks.kinopoisk_scheduler.discover_task": {"queue": "kp_pages_queue"},
-    "scrapers.tasks.kinopoisk_scheduler.expire_task": {"queue": "default"},
-    "scrapers.tasks.kinopoisk_scheduler.refill_task": {"queue": "default"},
+    "apps.scrapers.tasks.vavada.parse_single_iframe": {"queue": "vavada_queue"},
+    "apps.scrapers.tasks.vavada.spawn_iframe_parsers": {"queue": "default"},
+    "apps.scrapers.tasks.kinopoisk.parse_page_list_task": {"queue": "kp_pages_queue"},
+    "apps.scrapers.tasks.kinopoisk.parse_single_film_task": {"queue": "kp_films_queue"},
+    "apps.scrapers.tasks.kinopoisk_scheduler.discover_task": {"queue": "kp_pages_queue"},
+    "apps.scrapers.tasks.kinopoisk_scheduler.expire_task": {"queue": "default"},
+    "apps.scrapers.tasks.kinopoisk_scheduler.refill_task": {"queue": "default"},
 }
 
 PREMIERE = config("premiere", cast=int, default=40)

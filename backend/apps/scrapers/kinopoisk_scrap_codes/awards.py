@@ -78,12 +78,12 @@ def parse_awards(drivers, film_hrefs, additional_path):
                             href = a.get("href")
                             if href and "name/" in href:
                                 winners_id.append(href.split("/")[2])
-                            winner_participant.append(
-                                {
-                                    "name": li_text.split("(")[0].strip(),
-                                    "winner_id": winners_id,
-                                }
-                            )
+                        winner_participant.append(
+                            {
+                                "name": li_text.split("(")[0].strip(),
+                                "winner_id": winners_id,
+                            }
+                        )
                     else:
                         winner_content.append(li_text)
 
@@ -113,18 +113,18 @@ def parse_awards(drivers, film_hrefs, additional_path):
                         else:
                             nomination_content.append(li_text)
 
-                award_list.append(
-                    {
-                        "name": award_name,
-                        "slug": award_slug,
-                        "image": image,
-                        "award_year": award_year,
-                        "winner_content": winner_content,
-                        "winner_participant": winner_participant,
-                        "nomination_participant": nomination_participant,
-                        "nomination_content": nomination_content,
-                    }
-                )
+            award_list.append(
+                {
+                    "name": award_name,
+                    "slug": award_slug,
+                    "image": image,
+                    "award_year": award_year,
+                    "winner_content": winner_content,
+                    "winner_participant": winner_participant,
+                    "nomination_participant": nomination_participant,
+                    "nomination_content": nomination_content,
+                }
+            )
 
     except Exception as ex:
         print("Ошибка при парсинге наград:", ex)

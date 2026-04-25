@@ -17,11 +17,11 @@ def save_awards(content_obj, award_list):
 
         winners = award_data["winner_content"]
         for winner in winners:
-            year_winner, _ = models.AwardYearNomination.objects.get_or_create(
-                award_year=award_year, name=winner
+            models.AwardYearNomination.objects.get_or_create(
+                award_year=award_year,
+                name=winner,
+                winner_content=content_obj,
             )
-            year_winner.winner_content = content_obj
-            year_winner.save()
 
         winners_part = award_data["winner_participant"]
         for winner_part in winners_part:
@@ -29,11 +29,11 @@ def save_awards(content_obj, award_list):
                 participant, _ = models.Participant.objects.get_or_create(
                     participant_id=winner_id
                 )
-                year_winner_part, _ = models.AwardYearNomination.objects.get_or_create(
-                    award_year=award_year, name=winner_part["name"]
+                models.AwardYearNomination.objects.get_or_create(
+                    award_year=award_year,
+                    name=winner_part["name"],
+                    winner_participant=participant,
                 )
-                year_winner_part.winner_participant = participant
-                year_winner_part.save()
 
         nominations = award_data["nomination_content"]
         for nomination in nominations:

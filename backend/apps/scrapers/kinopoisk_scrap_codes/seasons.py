@@ -60,7 +60,7 @@ def parse_serial_seasons(drivers, film_hrefs, additional_path):
                 if season_text:
                     season_id = extract_int(season_text.text)
                     if season_id is not None:
-                        current_season = season_id
+                        current_season = str(season_id)
                         seasons.setdefault(current_season, {})
                     continue
 
@@ -71,6 +71,7 @@ def parse_serial_seasons(drivers, film_hrefs, additional_path):
                 episode_id = extract_int(episode_text.text if episode_text else None)
                 if episode_id is None:
                     continue
+                episode_id = str(episode_id)
 
                 ru_name = info_td.find("h1", style=re.compile(r"font-size:16px"))
                 ru_name = ru_name.text.strip() if ru_name else None

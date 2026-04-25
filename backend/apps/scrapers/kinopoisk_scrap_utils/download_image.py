@@ -43,7 +43,7 @@ def save_image_from_url_to_award(content_obj, poster_url):
 
     try:
         response = requests.get(poster_url, timeout=10)
-        if response.status == 200:
+        if response.status_code == 200:
             image_bytes = response.content
             image = Image.open(BytesIO(image_bytes))
             image.verify()
@@ -61,4 +61,4 @@ def save_image_from_url_to_award(content_obj, poster_url):
 
             content_obj.image.save(image_name, ContentFile(image_bytes), save=True)
     except Exception as e:
-        return
+        print(f"[award-image] ОШИБКА для {poster_url}: {type(e).__name__}: {e}")

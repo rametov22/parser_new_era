@@ -207,6 +207,9 @@ class Content(models.Model):
     )
 
     description = models.TextField()
+    description_ru = models.TextField(blank=True, null=True)
+    description_en = models.TextField(blank=True, null=True)
+    description_uz = models.TextField(blank=True, null=True)
     platform = models.ForeignKey(
         "Platform",
         on_delete=models.PROTECT,
@@ -263,6 +266,10 @@ class Content(models.Model):
         max_length=20, choices=PARSING_STATUS_CHOICES, default="not_parsed"
     )
 
+    parsed_at_kp = models.DateTimeField(null=True, blank=True)
+    parsed_at_uz = models.DateTimeField(null=True, blank=True)
+    parsed_at_ru = models.DateTimeField(null=True, blank=True)
+
     # objects = ContentQuerySet.as_manager()
 
     class Meta:
@@ -273,6 +280,8 @@ class Content(models.Model):
             models.Index(fields=["premiere_ru"]),
             models.Index(fields=["year_production"]),
             models.Index(fields=["kino_poisk_rating"]),
+            models.Index(fields=["is_parsed_kp", "parsed_at_kp"]),
+            models.Index(fields=["is_parsed_kp"]),
         ]
 
     def __str__(self):

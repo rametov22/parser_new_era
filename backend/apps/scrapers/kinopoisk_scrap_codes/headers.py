@@ -89,10 +89,10 @@ def get_is_serial(soup):
         if table_header:
             type_film = table_header.text
             if type_film:
-                if "фильм" in type_film.lower():
-                    is_serial = False
                 if "сериал" in type_film.lower():
                     is_serial = True
+                elif "фильм" in type_film.lower():
+                    is_serial = False
     except Exception as ex:
         print(f"Ошибка в table_header: {ex}")
     return is_serial
@@ -165,7 +165,7 @@ def parse_slogan(soup):
                 slogan = value_div.get_text(strip=True)
     except Exception as ex:
         print(f"Ошибка в slogan: {ex}")
-    if slogan is None:
+    if slogan is None or slogan.strip() in {"—", "-", "...", "–", "−"}:
         slogan = ""
     return slogan
 
@@ -266,9 +266,7 @@ def get_ratings_and_sequels(soup):
     except Exception as ex:
         print(f"Ошибка в рейтингах или сиквел: {ex}")
 
-    imdb_rating_formatted = f"{imdb_rating:.2f}" if imdb_rating is not None else None
-
-    return kino_poisk_rating, imdb_rating_formatted, sequel_list
+    return kino_poisk_rating, imdb_rating, sequel_list
 
 
 # poster-search

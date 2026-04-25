@@ -29,10 +29,12 @@ def update_mains(
     check_and_update("year_production", year_production)
     check_and_update("slogan", slogan)
     check_and_update("description", description)
+    check_and_update("description_ru", description)
     check_and_update("age_restriction", age)
     check_and_update("premiere", premiere)
     check_and_update("premiere_ru", premiere_ru)
     check_and_update("short_description", short_description)
+    check_and_update("short_description_ru", short_description)
 
     content_obj.kino_poisk_rating = kino_poisk_rating
     changed_fields.append("kino_poisk_rating")
@@ -44,11 +46,11 @@ def update_mains(
         content_obj.is_serial = is_serial
         changed_fields.append("is_serial")
 
-    if not content_obj.poster_link:
+    if poster and content_obj.poster_link != poster:
         content_obj.poster_link = poster
         changed_fields.append("poster_link")
 
-    if content_obj.trailer_link is None:
+    if trailer_link and content_obj.trailer_link != trailer_link:
         content_obj.trailer_link = trailer_link
         changed_fields.append("trailer_link")
 

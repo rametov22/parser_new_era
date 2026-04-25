@@ -1,6 +1,7 @@
 import re
 from urllib.parse import urljoin
 from bs4 import BeautifulSoup
+from django.db import transaction
 
 from ..kinopoisk_scrap_utils import (
     normalize_film_href,
@@ -145,17 +146,27 @@ def attach_film_to_platform(
     platform_id,
     kino_poisk_id,
 ):
-    platform = models.Platform.objects.filter(platform_id=platform_id).first()
-    if not platform:
+    if platform_id is None:
         return None
 
-    films = platform.films or {}
-    ids = films.get("platform_films_ids", [])
-    if kino_poisk_id not in ids:
-        ids.append(kino_poisk_id)
+    kp_id_str = str(kino_poisk_id)
 
-    films["platform_films_ids"] = ids
-    platform.films = films
-    platform.save()
+    with transaction.atomic(using="main_db"):
+        platform = (
+            models.Platform.objects.select_for_update()
+            .filter(platform_id=platform_id)
+            .first()
+        )
+        if not platform:
+            return None
+
+        films = platform.films or {}
+        ids = [str(x) for x in films.get("platform_films_ids", [])]
+        if kp_id_str not in ids:
+            ids.append(kp_id_str)
+
+        films["platform_films_ids"] = ids
+        platform.films = films
+        platform.save(update_fields=["films"])
 
     return platform

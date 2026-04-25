@@ -182,6 +182,9 @@ CELERY_TASK_ROUTES = {
     "scrapers.tasks.spawn_iframe_parsers": {"queue": "default"},
     "scrapers.tasks.parse_page_list_task": {"queue": "kp_pages_queue"},
     "scrapers.tasks.parse_single_film_task": {"queue": "kp_films_queue"},
+    "scrapers.tasks.kinopoisk_scheduler.discover_task": {"queue": "kp_pages_queue"},
+    "scrapers.tasks.kinopoisk_scheduler.expire_task": {"queue": "default"},
+    "scrapers.tasks.kinopoisk_scheduler.refill_task": {"queue": "default"},
 }
 
 PREMIERE = config("premiere", cast=int, default=40)

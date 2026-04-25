@@ -4,12 +4,11 @@ import random
 import json
 import datetime as dt
 from selenium import webdriver
-from fake_useragent import UserAgent
-from django.core.cache import cache
 from bs4 import BeautifulSoup
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from celery import shared_task
+from django.utils import timezone
 from .. import models
 from ..kinopoisk_scrap_codes import *
 from ..kinopoisk_scrap_saves import *
@@ -68,25 +67,6 @@ def inject_cookies(driver, cookies):
             print(f"Не удалось добавить куку: {e}")
 
 
-def start_global_parsing():
-    with open("/app/kinopoisk_cookies.json", "r") as f:
-        cookies = json.load(f)
-    # cache.set("kp_cookies", cookies, 86400)
-    driver = create_driver()
-    try:
-        inject_cookies(driver, cookies)
-        last_page = get_last_page_number(driver)
-
-        print(f"Найдено страниц: {last_page}. Начинаю постановку задач в очередь...")
-
-        for page in range(1, last_page + 1):
-            parse_page_list_task.delay(page, cookies)
-
-        print("Все задачи на страницы успешно добавлены в Redis.")
-    finally:
-        driver.quit()
-
-
 def get_last_page_number(driver):
     driver.get("https://www.kinopoisk.ru/lists/movies/")
     time.sleep(random.uniform(2, 4))
@@ -103,12 +83,29 @@ def get_last_page_number(driver):
     return 1
 
 
+def start_global_parsing():
+    with open("/app/kinopoisk_cookies.json", "r") as f:
+        cookies = json.load(f)
+    # cache.set("kp_cookies", cookies, 86400)
+    driver = create_driver()
+    try:
+        inject_cookies(driver, cookies)
+        last_page = get_last_page_number(driver)
+
+        print(f"Найдено страниц: {last_page}. Начинаю постановку задач в очередь...")
+
+        for page in range(1, last_page + 1):
+            parse_page_list_task.delay(page)
+
+        print("Все задачи на страницы успешно добавлены в Redis.")
+    finally:
+        driver.quit()
+
+
 @shared_task(bind=True)
-def parse_page_list_task(self, page_number, cookies):
-    # cookies = cache.get("kp_cookies")
-    # if not cookies:
-    #     print("Куки истекли или не найдены в кэше!")
-    #     return
+def parse_page_list_task(self, page_number):
+    with open("/app/kinopoisk_cookies.json", "r") as f:
+        cookies = json.load(f)
 
     print(f">>> Обработка страницы №{page_number}")
     driver = create_driver()
@@ -145,7 +142,7 @@ def parse_page_list_task(self, page_number, cookies):
 
                 if not exists:
                     print(f"ID {kp_id} готов к парсингу")
-                    parse_single_film_task.delay(kp_id, href, cookies)
+                    parse_single_film_task.delay(kp_id, href)
     except Exception as e:
         print(f"Ошибка на странице {page_number}: {e}")
     finally:
@@ -166,6 +163,9 @@ def parse_single_film_task(self, kp_id, href, cookies=None):
 
         if "showcaptcha" in driver.current_url:
             print(f"Капча на ID {kp_id}")
+            models.Content.objects.filter(kino_poisk_id=kp_id).update(
+                is_parsed_kp="not_parsed"
+            )
             return
 
         time.sleep(2)
@@ -182,9 +182,11 @@ def parse_single_film_task(self, kp_id, href, cookies=None):
         print(is_new_record)
 
         name_ru, name_original, short_desc, age = parse_header_info(soup)
-        print(name_ru, name_original)
+        print(
+            f"name_ru {name_ru}, name_original {name_original}, short_desc {short_desc}"
+        )
         description = get_description(soup)
-        print(description)
+        print("description", description)
         trailer_link = get_trailer(soup)
         print(trailer_link)
         is_serial = get_is_serial(soup)
@@ -309,9 +311,16 @@ def parse_single_film_task(self, kp_id, href, cookies=None):
             name_ru,
             name_original,
         )
+
+        content_obj.is_parsed_kp = "parsed"
+        content_obj.parsed_at_kp = timezone.now()
+        content_obj.save(update_fields=("is_parsed_kp", "parsed_at_kp"))
         print("end")
 
     except Exception as e:
         print(f"Ошибка в фильме {kp_id}, {e}")
+        models.Content.objects.filter(kino_poisk_id=kp_id).update(
+            is_parsed_kp="not_parsed"
+        )
     finally:
         driver.quit()

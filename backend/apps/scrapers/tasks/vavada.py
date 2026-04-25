@@ -30,41 +30,6 @@ stream_handler.setFormatter(formatter)
 logger.addHandler(stream_handler)
 
 
-PROXIES = [
-    "91.243.188.143:7951:ingp3040902:xB4pki06bZ",
-]
-
-# def create_driver():
-#     proxy_str = random.choice(PROXIES)
-#     p_ip, p_port, p_user, p_pass = proxy_str.split(':')
-
-#     wire_options = {
-#         'proxy': {
-#             'http': f'http://{p_user}:{p_pass}@{p_ip}:{p_port}',
-#             'https': f'https://{p_user}:{p_pass}@{p_ip}:{p_port}',
-#             'no_proxy': 'localhost,127.0.0.1'
-#         }
-#     }
-
-#     options = Options()
-#     options.add_argument(f"user-agent={ua.random}")
-#     options.add_argument("--headless=new") # 'new' — более современный режим
-#     options.add_argument("--no-sandbox")
-#     options.add_argument("--disable-dev-shm-usage")
-#     options.add_argument("--disable-blink-features=AutomationControlled")
-#     options.add_experimental_option("excludeSwitches", ["enable-automation"])
-#     options.add_experimental_option("useAutomationExtension", False)
-
-#     driver = webdriver.Chrome(options=options, seleniumwire_options=wire_options)
-
-#     # Сверхважная правка для скрытности:
-#     driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
-#         "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-#     })
-
-#     return driver
-
-
 def get_chrome_count():
     """Считает активные процессы Chrome для контроля ресурсов"""
     return sum(
@@ -111,9 +76,43 @@ def create_driver():
     return driver
 
 
+VAVADA_QUEUE_NAME = "vavada_queue"
+VAVADA_QUEUE_THRESHOLD = 500
+
+
+def _vavada_queue_length():
+    import redis
+
+    r = redis.Redis(
+        host=settings.REDIS_HOST,
+        port=int(settings.REDIS_PORT),
+        password=settings.REDIS_PASSWORD,
+        decode_responses=True,
+    )
+    return r.llen(VAVADA_QUEUE_NAME)
+
+
 @shared_task()
 def spawn_iframe_parsers():
-    """Диспетчер: находит фильмы без контента и ставит их в очередь Celery"""
+    """
+    Диспетчер: находит премьерные фильмы для парсинга vavada
+    и кидает их в очередь.
+
+    Берём:
+      - is_parsed_ru="not_parsed" (новые / неудачные)
+      - ИЛИ is_parsed_ru="parsed" + is_serial=True (сериалам нужно обновлять
+        last_episode/last_season/audio_tracks по мере выхода новых серий)
+    Плюс окно last_update <= today - 4 дня (не дёргаем чаще 4 дней).
+    Плюс окно премьеры PREMIERE дней.
+    """
+    queue_len = _vavada_queue_length()
+    if queue_len >= VAVADA_QUEUE_THRESHOLD:
+        logger.info(
+            f"[vavada-dispatcher] очередь {VAVADA_QUEUE_NAME}: {queue_len} задач "
+            f">= {VAVADA_QUEUE_THRESHOLD}, пропускаем тик"
+        )
+        return 0
+
     today = timezone.now().date()
     start_date = today - timedelta(days=settings.PREMIERE)
     cut_date = today - timedelta(days=4)
@@ -122,14 +121,32 @@ def spawn_iframe_parsers():
         premiere_ru__range=(start_date, today)
     )
 
-    films_to_update = (
-        Content.objects.filter(film_content__isnull=True, last_update__lte=cut_date)
+    status_filter = Q(is_parsed_ru="not_parsed") | (
+        Q(is_parsed_ru="parsed") & Q(is_serial=True)
+    )
+
+    kp_ids = list(
+        Content.objects.filter(status_filter)
+        .filter(last_update__lte=cut_date)
         .filter(date_filter)
         .values_list("kino_poisk_id", flat=True)
     )
 
-    for kp_id in films_to_update:
+    if not kp_ids:
+        logger.info("[vavada-dispatcher] нет кандидатов")
+        return 0
+
+    # Атомарный захват: помечаем in_progress, чтобы повторный диспатч
+    # не подхватил эти же фильмы и не накидал дублей в очередь.
+    Content.objects.filter(kino_poisk_id__in=kp_ids).update(
+        is_parsed_ru="in_progress"
+    )
+
+    for kp_id in kp_ids:
         parse_single_iframe.delay(kp_id)
+
+    logger.info(f"[vavada-dispatcher] поставлено в очередь: {len(kp_ids)}")
+    return len(kp_ids)
 
 
 # concurrency 3
@@ -163,8 +180,14 @@ def parse_single_iframe(self, kp_id):
                 )
             )
         except Exception:
-            film.last_update = timezone.now()
-            film.save(update_fields=["last_update"])
+            # Плеер ещё не появился. Сбрасываем статус и ставим last_update
+            # на ~4 часа назад, чтобы фильм снова попал в окно через 4 часа,
+            # а не через 4 дня.
+            film.is_parsed_ru = "not_parsed"
+            film.last_update = (
+                timezone.now() - timedelta(days=3, hours=20)
+            ).date()
+            film.save(update_fields=["is_parsed_ru", "last_update"])
             return f"No player found for {kp_id}"
 
         # Сохраняем основные данные
@@ -301,7 +324,19 @@ def parse_single_iframe(self, kp_id):
         ScraperLog.objects.create(
             task_name=f"Vavada parser {kp_id}", status="error", message=str(exc)
         )
-        raise self.retry(exc=exc, countdown=60)
+        try:
+            raise self.retry(exc=exc, countdown=60)
+        except self.MaxRetriesExceededError:
+            # Все ретраи исчерпаны — сбрасываем статус, чтобы диспетчер
+            # подхватил фильм снова при следующем запуске.
+            Content.objects.filter(kino_poisk_id=kp_id).update(
+                is_parsed_ru="not_parsed",
+                last_update=(
+                    timezone.now() - timedelta(days=3, hours=20)
+                ).date(),
+            )
+            logger.error(f"☠️  {kp_id} | retries исчерпаны, статус сброшен в not_parsed")
+            raise
     finally:
         if driver:
             driver.quit()

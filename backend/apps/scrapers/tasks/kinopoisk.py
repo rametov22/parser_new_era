@@ -155,8 +155,17 @@ def parse_single_film_task(self, kp_id, href, cookies=None):
         with open("/app/kinopoisk_cookies.json", "r") as f:
             cookies = json.load(f)
     film_href = f"https://www.kinopoisk.ru{href}"
-    driver = create_driver()
+
+    driver = None
     try:
+        try:
+            driver = create_driver()
+        except Exception as e:
+            print(f"Chrome не стартанул для {kp_id}: {type(e).__name__}: {e}")
+            models.Content.objects.filter(kino_poisk_id=kp_id).update(
+                is_parsed_kp="not_parsed"
+            )
+            return
         inject_cookies(driver, cookies)
         driver.get(film_href)
         print(f">>> Обработка ID {kp_id}")
@@ -284,4 +293,8 @@ def parse_single_film_task(self, kp_id, href, cookies=None):
             is_parsed_kp="not_parsed"
         )
     finally:
-        driver.quit()
+        if driver:
+            try:
+                driver.quit()
+            except Exception:
+                pass

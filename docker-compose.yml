@@ -54,7 +54,8 @@ services:
 
   celery_kp_films:
     <<: *backend-defaults
-    command: celery -A config worker -Q kp_films_queue --concurrency=10 -n kp_films_worker@%h -l info
+    command: celery -A config worker -Q kp_films_queue --concurrency=3 -n kp_films_worker@%h -l info
+    shm_size: "2gb"
     depends_on:
       redis:
         condition: service_healthy

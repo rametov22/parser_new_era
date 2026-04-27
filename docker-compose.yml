@@ -33,14 +33,15 @@ services:
 
   celery_default:
     <<: *backend-defaults
-    command: celery -A config worker -Q default --concurrency=10 -n default_worker@%h -l info
+    command: celery -A config worker -Q default --concurrency=8 -n default_worker@%h -l info
     depends_on:
       redis:
         condition: service_healthy
 
   celery_vavada:
     <<: *backend-defaults
-    command: celery -A config worker -Q vavada_queue --concurrency=3 -n vavada_worker@%h -l info
+    command: celery -A config worker -Q vavada_queue --concurrency=5 -n vavada_worker@%h -l info
+    shm_size: "4gb"
     depends_on:
       redis:
         condition: service_healthy
@@ -48,14 +49,15 @@ services:
   celery_kp_pages:
     <<: *backend-defaults
     command: celery -A config worker -Q kp_pages_queue --concurrency=2 -n kp_pages_worker@%h -l info
+    shm_size: "2gb"
     depends_on:
       redis:
         condition: service_healthy
 
   celery_kp_films:
     <<: *backend-defaults
-    command: celery -A config worker -Q kp_films_queue --concurrency=3 -n kp_films_worker@%h -l info
-    shm_size: "2gb"
+    command: celery -A config worker -Q kp_films_queue --concurrency=5 -n kp_films_worker@%h -l info
+    shm_size: "4gb"
     depends_on:
       redis:
         condition: service_healthy

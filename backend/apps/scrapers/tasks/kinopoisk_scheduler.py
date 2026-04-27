@@ -45,6 +45,7 @@ QUEUE_THRESHOLD = 100
 REFILL_BATCH = 100
 
 REPARSE_TTL_DAYS = 5
+IN_PROGRESS_STUCK_MINUTES = 30
 
 COOKIES_PATH = "/app/kinopoisk_cookies.json"
 
@@ -153,16 +154,29 @@ def discover_task(self):
 @shared_task(bind=True, queue="default")
 def expire_task(self):
     """
-    Помечает записи, спаршенные более REPARSE_TTL_DAYS дней назад,
-    как not_parsed. Использует SQL UPDATE одним запросом.
+    Сбрасывает в not_parsed:
+      - записи, спаршенные более REPARSE_TTL_DAYS дней назад (для регулярного обновления)
+      - записи, зависшие в in_progress дольше IN_PROGRESS_STUCK_MINUTES минут
+        (например, воркер упал не дойдя до except — статус остался in_progress)
     """
-    threshold = timezone.now() - timedelta(days=REPARSE_TTL_DAYS)
-    count = models.Content.objects.filter(
+    now = timezone.now()
+    stale_threshold = now - timedelta(days=REPARSE_TTL_DAYS)
+    stuck_threshold = now - timedelta(minutes=IN_PROGRESS_STUCK_MINUTES)
+
+    stale = models.Content.objects.filter(
         is_parsed_kp="parsed",
-        parsed_at_kp__lt=threshold,
+        parsed_at_kp__lt=stale_threshold,
     ).update(is_parsed_kp="not_parsed")
-    print(f"[expire] Переведено в not_parsed: {count}")
-    return count
+
+    from django.db.models import Q
+
+    stuck = models.Content.objects.filter(
+        Q(is_parsed_kp="in_progress")
+        & (Q(parsed_at_kp__lt=stuck_threshold) | Q(parsed_at_kp__isnull=True))
+    ).update(is_parsed_kp="not_parsed")
+
+    print(f"[expire] устаревших parsed: {stale}, зависших in_progress: {stuck}")
+    return {"stale": stale, "stuck": stuck}
 
 
 @shared_task(bind=True, queue="default")
@@ -188,7 +202,8 @@ def refill_task(self):
         return 0
 
     models.Content.objects.filter(kino_poisk_id__in=kp_ids).update(
-        is_parsed_kp="in_progress"
+        is_parsed_kp="in_progress",
+        parsed_at_kp=timezone.now(),
     )
 
     for kp_id in kp_ids:

@@ -155,28 +155,41 @@ def discover_task(self):
 def expire_task(self):
     """
     Сбрасывает в not_parsed:
-      - записи, спаршенные более REPARSE_TTL_DAYS дней назад (для регулярного обновления)
-      - записи, зависшие в in_progress дольше IN_PROGRESS_STUCK_MINUTES минут
-        (например, воркер упал не дойдя до except — статус остался in_progress)
+      - kp parsed старше REPARSE_TTL_DAYS дней (для регулярного обновления)
+      - kp in_progress старше IN_PROGRESS_STUCK_MINUTES минут (зависшие)
+      - vavada in_progress старше IN_PROGRESS_STUCK_MINUTES минут (зависшие)
     """
+    from django.db.models import Q
+
     now = timezone.now()
     stale_threshold = now - timedelta(days=REPARSE_TTL_DAYS)
     stuck_threshold = now - timedelta(minutes=IN_PROGRESS_STUCK_MINUTES)
 
-    stale = models.Content.objects.filter(
+    kp_stale = models.Content.objects.filter(
         is_parsed_kp="parsed",
         parsed_at_kp__lt=stale_threshold,
     ).update(is_parsed_kp="not_parsed")
 
-    from django.db.models import Q
-
-    stuck = models.Content.objects.filter(
+    kp_stuck = models.Content.objects.filter(
         Q(is_parsed_kp="in_progress")
         & (Q(parsed_at_kp__lt=stuck_threshold) | Q(parsed_at_kp__isnull=True))
     ).update(is_parsed_kp="not_parsed")
 
-    print(f"[expire] устаревших parsed: {stale}, зависших in_progress: {stuck}")
-    return {"stale": stale, "stuck": stuck}
+    vavada_stuck = models.Content.objects.filter(
+        Q(is_parsed_ru="in_progress")
+        & (Q(parsed_at_ru__lt=stuck_threshold) | Q(parsed_at_ru__isnull=True))
+    ).update(is_parsed_ru="not_parsed")
+
+    print(
+        f"[expire] kp устаревших parsed: {kp_stale}, "
+        f"kp зависших in_progress: {kp_stuck}, "
+        f"vavada зависших in_progress: {vavada_stuck}"
+    )
+    return {
+        "kp_stale": kp_stale,
+        "kp_stuck": kp_stuck,
+        "vavada_stuck": vavada_stuck,
+    }
 
 
 @shared_task(bind=True, queue="default")

@@ -203,14 +203,13 @@ def parse_single_iframe(self, kp_id):
             # на ~4 часа назад, чтобы фильм снова попал в окно через 4 часа,
             # а не через 4 дня.
             film.is_parsed_ru = "not_parsed"
-            film.last_update = (
-                timezone.now() - timedelta(days=3, hours=20)
-            ).date()
+            film.last_update = (timezone.now() - timedelta(days=3, hours=20)).date()
             film.save(update_fields=["is_parsed_ru", "last_update"])
             return f"No player found for {kp_id}"
 
         # Сохраняем основные данные
-        film.film_content = f"https://vavada.video/iframe/{kp_id}"
+        film.film_content = f"https://iframe.cloud/iframe/{kp_id}"
+        # https://vavada.video/iframe/
         film.add_content_date = timezone.now().date()
 
         # Переключаемся во фрейм для аудиодорожек
@@ -350,9 +349,7 @@ def parse_single_iframe(self, kp_id):
             # подхватил фильм снова при следующем запуске.
             Content.objects.filter(kino_poisk_id=kp_id).update(
                 is_parsed_ru="not_parsed",
-                last_update=(
-                    timezone.now() - timedelta(days=3, hours=20)
-                ).date(),
+                last_update=(timezone.now() - timedelta(days=3, hours=20)).date(),
             )
             logger.error(f"☠️  {kp_id} | retries исчерпаны, статус сброшен в not_parsed")
             raise

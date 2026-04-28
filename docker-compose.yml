@@ -65,8 +65,17 @@ services:
   celery-beat:
     <<: *backend-defaults
     command: celery -A config beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f 'celery.*beat' > /dev/null"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     depends_on:
       redis:
+        condition: service_healthy
+      db:
         condition: service_healthy
 
   redis:
@@ -75,7 +84,18 @@ services:
       - ./.env
     expose:
       - 6379
-    command: redis-server --requirepass ${REDIS_PASSWORD}
+    # --save "" отключает RDB-снепшоты (брокеру Celery персистенс не нужен).
+    # --appendonly no отключает AOF.
+    # --maxmemory 4gb ограничивает память; при достижении — выкидывает старое (allkeys-lru).
+    # --stop-writes-on-bgsave-error no — на всякий случай, чтобы запись не блокировалась.
+    command: >
+      redis-server
+      --requirepass ${REDIS_PASSWORD}
+      --save ""
+      --appendonly no
+      --stop-writes-on-bgsave-error no
+      --maxmemory 4gb
+      --maxmemory-policy allkeys-lru
     volumes:
       - redis-data:/data
     healthcheck:

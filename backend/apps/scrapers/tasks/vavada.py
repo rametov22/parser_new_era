@@ -78,6 +78,7 @@ def create_driver():
 
 VAVADA_QUEUE_NAME = "vavada_queue"
 VAVADA_QUEUE_THRESHOLD = 500
+VAVADA_IN_PROGRESS_STUCK_MINUTES = 30
 
 
 def _vavada_queue_length():
@@ -136,10 +137,12 @@ def spawn_iframe_parsers():
         logger.info("[vavada-dispatcher] нет кандидатов")
         return 0
 
-    # Атомарный захват: помечаем in_progress, чтобы повторный диспатч
-    # не подхватил эти же фильмы и не накидал дублей в очередь.
+    # Атомарный захват: помечаем in_progress + запоминаем время захвата
+    # в parsed_at_ru — чтобы expire_stuck_vavada_task мог отличить
+    # «давно зависшие» от «только что взятых».
     Content.objects.filter(kino_poisk_id__in=kp_ids).update(
-        is_parsed_ru="in_progress"
+        is_parsed_ru="in_progress",
+        parsed_at_ru=timezone.now(),
     )
 
     for kp_id in kp_ids:
@@ -147,6 +150,22 @@ def spawn_iframe_parsers():
 
     logger.info(f"[vavada-dispatcher] поставлено в очередь: {len(kp_ids)}")
     return len(kp_ids)
+
+
+@shared_task(queue="default")
+def expire_stuck_vavada_task():
+    """
+    Сбрасывает в not_parsed записи vavada, зависшие в in_progress дольше
+    VAVADA_IN_PROGRESS_STUCK_MINUTES минут (например, при OOM-killer
+    или жёсткой смерти воркера, когда except не успел отработать).
+    """
+    threshold = timezone.now() - timedelta(minutes=VAVADA_IN_PROGRESS_STUCK_MINUTES)
+    stuck = Content.objects.filter(
+        Q(is_parsed_ru="in_progress")
+        & (Q(parsed_at_ru__lt=threshold) | Q(parsed_at_ru__isnull=True))
+    ).update(is_parsed_ru="not_parsed")
+    logger.info(f"[vavada-expire] зависших in_progress сброшено: {stuck}")
+    return stuck
 
 
 # concurrency 3

@@ -42,24 +42,27 @@ services:
     <<: *backend-defaults
     # --max-tasks-per-child=50: каждый дочерний процесс перезапускается после 50 задач,
     # чтобы не накапливать утечки потоков от Selenium/Chrome.
-    command: celery -A config worker -Q vavada_queue --concurrency=5 -n vavada_worker@%h -l info --max-tasks-per-child=50
+    command: celery -A config worker -Q vavada_queue --concurrency=3 -n vavada_worker@%h -l info --max-tasks-per-child=30
     shm_size: "4gb"
+    pids_limit: 4096
     depends_on:
       redis:
         condition: service_healthy
 
   celery_kp_pages:
     <<: *backend-defaults
-    command: celery -A config worker -Q kp_pages_queue --concurrency=2 -n kp_pages_worker@%h -l info --max-tasks-per-child=20
+    command: celery -A config worker -Q kp_pages_queue --concurrency=1 -n kp_pages_worker@%h -l info --max-tasks-per-child=10
     shm_size: "2gb"
+    pids_limit: 2048
     depends_on:
       redis:
         condition: service_healthy
 
   celery_kp_films:
     <<: *backend-defaults
-    command: celery -A config worker -Q kp_films_queue --concurrency=5 -n kp_films_worker@%h -l info --max-tasks-per-child=50
+    command: celery -A config worker -Q kp_films_queue --concurrency=3 -n kp_films_worker@%h -l info --max-tasks-per-child=30
     shm_size: "4gb"
+    pids_limit: 4096
     depends_on:
       redis:
         condition: service_healthy

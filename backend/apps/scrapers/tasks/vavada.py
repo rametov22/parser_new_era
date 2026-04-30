@@ -39,8 +39,22 @@ def get_chrome_count():
     )
 
 
+def _kill_zombie_chrome():
+    """Убивает осиротевшие chromedriver/chrome процессы (PPID=1 = zombie)."""
+    for proc in psutil.process_iter(["pid", "ppid", "name"]):
+        try:
+            name = (proc.info.get("name") or "").lower()
+            if "chromedriver" in name or "chrome" in name:
+                if proc.info.get("ppid") == 1:
+                    proc.kill()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+
+
 def create_driver():
     """Создает драйвер, подключаясь к удаленному браузеру или локальному"""
+
+    _kill_zombie_chrome()
 
     ua = UserAgent()
     random_user_agent = ua.random
@@ -65,6 +79,9 @@ def create_driver():
 
     service = Service(executable_path="/usr/bin/chromedriver")
     driver = webdriver.Chrome(service=service, options=options)
+
+    driver.set_page_load_timeout(45)
+    driver.set_script_timeout(30)
 
     driver.execute_cdp_cmd(
         "Page.addScriptToEvaluateOnNewDocument",
@@ -175,6 +192,8 @@ def expire_stuck_vavada_task():
     max_retries=3,
     rate_limit="10/m",
     acks_late=True,
+    soft_time_limit=180,
+    time_limit=210,
 )
 def parse_single_iframe(self, kp_id):
     """Парсинг одного конкретного фильма через Selenium"""

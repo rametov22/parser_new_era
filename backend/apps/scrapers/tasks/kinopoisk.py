@@ -3,6 +3,7 @@ import time
 import random
 import json
 import datetime as dt
+import psutil
 from selenium import webdriver
 from bs4 import BeautifulSoup
 from selenium.webdriver.chrome.options import Options
@@ -23,11 +24,22 @@ additional_path_awards = "awards/"
 additional_path_episodes = "episodes/"
 
 
+def _kill_zombie_chrome():
+    """Убивает осиротевшие chromedriver/chrome процессы (PPID=1 = zombie)."""
+    for proc in psutil.process_iter(["pid", "ppid", "name"]):
+        try:
+            name = (proc.info.get("name") or "").lower()
+            if "chromedriver" in name or "chrome" in name:
+                if proc.info.get("ppid") == 1:
+                    proc.kill()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+
+
 def create_driver():
     """Создает драйвер, подключаясь к удаленному браузеру или локальному"""
 
-    # ua = UserAgent()
-    # random_user_agent = ua.random
+    _kill_zombie_chrome()
 
     options = Options()
     options.binary_location = "/usr/bin/chromium"
@@ -44,6 +56,9 @@ def create_driver():
 
     service = Service(executable_path="/usr/bin/chromedriver")
     driver = webdriver.Chrome(service=service, options=options)
+
+    driver.set_page_load_timeout(45)
+    driver.set_script_timeout(30)
 
     driver.execute_cdp_cmd(
         "Page.addScriptToEvaluateOnNewDocument",
@@ -149,7 +164,13 @@ def parse_page_list_task(self, page_number):
         driver.quit()
 
 
-@shared_task(bind=True, max_retries=None, queue="kp_films_queue")
+@shared_task(
+    bind=True,
+    max_retries=None,
+    queue="kp_films_queue",
+    soft_time_limit=180,
+    time_limit=210,
+)
 def parse_single_film_task(self, kp_id, href, cookies=None):
     if cookies is None:
         with open("/app/kinopoisk_cookies.json", "r") as f:

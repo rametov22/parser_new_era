@@ -141,6 +141,70 @@ def parse_like_films(drivers, film_hrefs, additional_path):
     return likes
 
 
+# Карта секций на странице /other/ → значение поля "relation"
+# в additional["sequel"]. Названия секций со страницы Кинопоиска,
+# приведённые к нижнему регистру.
+OTHER_RELATIONS_SECTIONS = {
+    "начало": "начало",
+    "продолжение": "продолжение",
+    "приквел": "приквел",
+    "ремейк": "ремейк",
+    "спин-офф": "спин-офф",
+    "версия фильма": "версия фильма",
+    "сиквел": "сиквел",
+    "сиквелы и приквелы": "сиквел",
+}
+
+
+# other-relations-search
+def parse_other_relations(drivers, film_hrefs, additional_path):
+    """
+    Парсит страницу /other/ — связи фильма: продолжение, приквел, ремейк,
+    спин-офф, версия фильма, начало.
+    Возвращает плоский список:
+      [{"kino_poisk_ids": "12345", "relation": "продолжение"}, ...]
+    """
+    relations = []
+    try:
+        film_hrefs = normalize_film_href(film_hrefs)
+        href = urljoin(film_hrefs, additional_path)
+
+        soup = load_page_and_soup(drivers, href)
+
+        # Каждая секция = inner <table> с <td class="main_line">Название</td>
+        # и <div class="personPageItems"> со списком фильмов внутри той же таблицы.
+        for section_td in soup.find_all("td", class_="main_line"):
+            section_name = section_td.get_text(strip=True).lower()
+            relation_key = OTHER_RELATIONS_SECTIONS.get(section_name)
+            if not relation_key:
+                continue
+
+            section_table = section_td.find_parent("table")
+            if not section_table:
+                continue
+
+            items_container = section_table.find("div", class_="personPageItems")
+            if not items_container:
+                continue
+
+            for item_div in items_container.find_all("div", class_="item"):
+                link = item_div.find(
+                    "a", href=re.compile(r"/(?:film|series)/\d+/")
+                )
+                if not link:
+                    continue
+                match = re.search(
+                    r"/(?:film|series)/(\d+)/", link.get("href", "")
+                )
+                if not match:
+                    continue
+                relations.append({"kino_poisk_ids": match.group(1)})
+    except Exception as ex:
+        print(f"Ошибка в other relations: {ex}")
+
+    return relations
+
+
 # platform-attach-search
 def attach_film_to_platform(
     platform_id,

@@ -22,6 +22,7 @@ additional_path_studio = "studio/"
 additional_path_like = "like/"
 additional_path_awards = "awards/"
 additional_path_episodes = "episodes/"
+additional_path_other = "other/"
 
 
 def _kill_zombie_chrome():
@@ -107,12 +108,8 @@ def start_global_parsing():
         inject_cookies(driver, cookies)
         last_page = get_last_page_number(driver)
 
-        print(f"Найдено страниц: {last_page}. Начинаю постановку задач в очередь...")
-
         for page in range(1, last_page + 1):
             parse_page_list_task.delay(page)
-
-        print("Все задачи на страницы успешно добавлены в Redis.")
     finally:
         driver.quit()
 
@@ -122,7 +119,6 @@ def parse_page_list_task(self, page_number):
     with open("/app/kinopoisk_cookies.json", "r") as f:
         cookies = json.load(f)
 
-    print(f">>> Обработка страницы №{page_number}")
     driver = create_driver()
 
     try:
@@ -132,7 +128,7 @@ def parse_page_list_task(self, page_number):
         time.sleep(random.uniform(1, 3))
 
         if "showcaptcha" in driver.current_url:
-            print(f"!!! КАПЧА на странице {page_number}")
+            print(f"КАПЧА на странице {page_number}")
             return
 
         soup = BeautifulSoup(driver.page_source, "lxml")
@@ -140,9 +136,6 @@ def parse_page_list_task(self, page_number):
         items = soup.find_all("div", attrs={"data-tid": "679d3e26"})
 
         if not items:
-            print(
-                f"Предупреждение: На странице {page_number} не найдено ни одного фильма."
-            )
             return
 
         for item in items:
@@ -156,7 +149,6 @@ def parse_page_list_task(self, page_number):
                 ).exists()
 
                 if not exists:
-                    print(f"ID {kp_id} готов к парсингу")
                     parse_single_film_task.delay(kp_id, href)
     except Exception as e:
         print(f"Ошибка на странице {page_number}: {e}")
@@ -189,7 +181,6 @@ def parse_single_film_task(self, kp_id, href, cookies=None):
             return
         inject_cookies(driver, cookies)
         driver.get(film_href)
-        print(f">>> Обработка ID {kp_id}")
 
         if "showcaptcha" in driver.current_url:
             print(f"Капча на ID {kp_id}")
@@ -215,6 +206,18 @@ def parse_single_film_task(self, kp_id, href, cookies=None):
         slogan = parse_slogan(soup)
         kp_rating, imdb_rating, sequel_list = get_ratings_and_sequels(soup)
         poster_url = parse_poster(soup)
+
+        # Связи со страницы /other/ — парсим для всех фильмов независимо от года.
+        # На главной и в /other/ часто одни и те же фильмы, но у некоторых одни
+        # есть только на одной странице → объединяем без дублей по kino_poisk_ids.
+        other_relations = parse_other_relations(
+            driver, film_href, additional_path_other
+        )
+        if other_relations:
+            seen_ids = {s.get("kino_poisk_ids") for s in sequel_list}
+            sequel_list = sequel_list + [
+                r for r in other_relations if r["kino_poisk_ids"] not in seen_ids
+            ]
 
         if is_new_record:
             content_obj = models.Content(
@@ -306,7 +309,6 @@ def parse_single_film_task(self, kp_id, href, cookies=None):
         content_obj.is_parsed_kp = "parsed"
         content_obj.parsed_at_kp = timezone.now()
         content_obj.save(update_fields=("is_parsed_kp", "parsed_at_kp"))
-        print("end")
 
     except Exception as e:
         print(f"Ошибка в фильме {kp_id}, {e}")

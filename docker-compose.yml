@@ -60,9 +60,9 @@ services:
 
   celery_kp_films:
     <<: *backend-defaults
-    command: celery -A config worker -Q kp_films_queue --concurrency=3 -n kp_films_worker@%h -l info --max-tasks-per-child=30
-    shm_size: "4gb"
-    pids_limit: 4096
+    command: celery -A config worker -Q kp_films_queue --concurrency=10 -n kp_films_worker@%h -l info --max-tasks-per-child=30
+    shm_size: "8gb"
+    pids_limit: 8192
     depends_on:
       redis:
         condition: service_healthy

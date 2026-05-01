@@ -13,7 +13,7 @@ from django.utils import timezone
 from .. import models
 from ..kinopoisk_scrap_codes import *
 from ..kinopoisk_scrap_saves import *
-from ..kinopoisk_scrap_utils import download_and_save_poster
+from ..kinopoisk_scrap_utils import download_and_save_poster, make_session
 
 
 additional_path_keywords = "keywords/"

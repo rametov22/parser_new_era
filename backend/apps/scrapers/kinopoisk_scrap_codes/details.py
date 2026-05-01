@@ -162,7 +162,7 @@ def parse_other_relations(drivers, film_hrefs, additional_path):
     Парсит страницу /other/ — связи фильма: продолжение, приквел, ремейк,
     спин-офф, версия фильма, начало.
     Возвращает плоский список:
-      [{"kino_poisk_ids": "12345", "relation": "продолжение"}, ...]
+      [{"kino_poisk_ids": "12345"}, ...]
     """
     relations = []
     try:

@@ -270,6 +270,10 @@ class Content(models.Model):
     parsed_at_uz = models.DateTimeField(null=True, blank=True)
     parsed_at_ru = models.DateTimeField(null=True, blank=True)
 
+    parse_count_kp = models.PositiveIntegerField(default=0)
+    parse_count_uz = models.PositiveIntegerField(default=0)
+    parse_count_ru = models.PositiveIntegerField(default=0)
+
     # objects = ContentQuerySet.as_manager()
 
     class Meta:
@@ -282,6 +286,7 @@ class Content(models.Model):
             models.Index(fields=["kino_poisk_rating"]),
             models.Index(fields=["is_parsed_kp", "parsed_at_kp"]),
             models.Index(fields=["is_parsed_kp"]),
+            models.Index(fields=["parse_count_kp"]),
         ]
 
     def __str__(self):

@@ -323,6 +323,7 @@ def parse_single_iframe(self, kp_id):
         film.player_variables = player_list
         film.last_update = timezone.now()
         film.is_parsed_ru = "parsed"
+        film.parsed_at_ru = timezone.now()
 
         # Сохраняем всё в основную базу (managed=False модель это позволяет)
         film.save(
@@ -336,7 +337,14 @@ def parse_single_iframe(self, kp_id):
                 "last_episode",
                 "last_update",
                 "is_parsed_ru",
+                "parsed_at_ru",
             ]
+        )
+
+        # Инкрементируем счётчик циклов парсинга vavada атомарно
+        from django.db.models import F as _F
+        Content.objects.filter(pk=film.pk).update(
+            parse_count_ru=_F("parse_count_ru") + 1
         )
 
         exec_time = (timezone.now() - start_time).total_seconds()

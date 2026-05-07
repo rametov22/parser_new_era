@@ -19,7 +19,10 @@ from django.contrib import admin
 from django.urls import path
 from django.http import JsonResponse
 
+from apps.scrapers.views import parser_stats
+
 urlpatterns = [
+    path("admin/parser-stats/", parser_stats, name="parser_stats"),
     path("admin/", admin.site.urls),
     path(
         "healthcheck/",

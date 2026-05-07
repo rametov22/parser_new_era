@@ -7,8 +7,8 @@ from ..utils import parse_age
 from django.db import transaction
 
 headers = {
-    "User-Agent": "ExoPlayer",
-    "Authorization": "Bearer 1659095|4h95ZGeIqyx1DMvLQqddI2KmoSBEizDp8tMRIohr",
+    "User-Agent": "okhttp/5.1.0",
+    "Authorization": "Bearer 177270|r1Sy3xfJltnuQmSX8HGnoxbYsJ3BlKvzHbSiGJxK16f9df4a",
     "Accept": "application/json",
 }
 
@@ -142,3 +142,15 @@ def connect_yt_content(self):
             message=f"Ошибка {str(exc)}",
         )
         raise self.retry(exc=exc, countdown=300)
+
+
+@shared_task(bind=True, max_retries=3)
+def get_movie_url(self):
+    task_name = "Get Movie Url for Content"
+    url = "https://admin.yangi.tv/api/v1/getMovieUrl"
+
+    ScraperLog.objects.create(
+        task_name=task_name, status="started", message="Начат скрап плееров"
+    )
+
+    

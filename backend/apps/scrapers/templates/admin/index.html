@@ -1,0 +1,13 @@
+{% extends "admin/index.html" %}
+
+{% block content %}
+<div style="background: #79aec8; color: white; padding: 16px; border-radius: 8px; margin-bottom: 24px;">
+    <h2 style="margin: 0 0 8px; color: white;">📊 Статистика парсеров</h2>
+    <p style="margin: 0 0 12px;">Полный дашборд состояния парсеров: циклы, прогресс, активность.</p>
+    <a href="{% url 'parser_stats' %}" style="display: inline-block; background: white; color: #417690; padding: 8px 16px; border-radius: 4px; text-decoration: none; font-weight: bold;">
+        Открыть дашборд →
+    </a>
+</div>
+
+{{ block.super }}
+{% endblock %}

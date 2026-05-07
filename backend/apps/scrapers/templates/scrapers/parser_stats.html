@@ -1,0 +1,211 @@
+{% extends "admin/base_site.html" %}
+{% load humanize %}
+
+{% block title %}Статистика парсеров{% endblock %}
+
+{% block branding %}
+<h1 id="site-name"><a href="/admin/">Админка</a> / Статистика парсеров</h1>
+{% endblock %}
+
+{% block content %}
+<style>
+.parser-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 24px;
+    margin-bottom: 32px;
+}
+.parser-card {
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    padding: 16px;
+    background: #f9f9f9;
+}
+.parser-card h2 {
+    margin: 0 0 12px;
+    border-bottom: 2px solid #79aec8;
+    padding-bottom: 8px;
+}
+.parser-card h3 {
+    margin: 16px 0 8px;
+    font-size: 13px;
+    color: #555;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.parser-card table {
+    width: 100%;
+    border-collapse: collapse;
+}
+.parser-card td {
+    padding: 5px 4px;
+    border-bottom: 1px solid #eee;
+}
+.parser-card td.label {
+    color: #666;
+    width: 60%;
+}
+.parser-card td.value {
+    text-align: right;
+    font-weight: bold;
+    font-family: monospace;
+    font-size: 13px;
+}
+
+.big-number {
+    font-size: 32px;
+    color: #417690;
+    font-family: monospace;
+    font-weight: bold;
+}
+.big-number.green { color: #2c8c2c; }
+.big-number.orange { color: #d68910; }
+
+.cycle-row {
+    display: flex;
+    align-items: center;
+    margin: 4px 0;
+    gap: 8px;
+}
+.cycle-label {
+    width: 80px;
+    font-size: 12px;
+    color: #555;
+    font-family: monospace;
+}
+.cycle-bar-bg {
+    flex: 1;
+    background: #e8e8e8;
+    height: 22px;
+    border-radius: 4px;
+    overflow: hidden;
+    position: relative;
+}
+.cycle-bar-fg {
+    height: 100%;
+    background: linear-gradient(90deg, #79aec8, #417690);
+    transition: width 0.3s;
+}
+.cycle-bar-text {
+    position: absolute;
+    left: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 11px;
+    font-family: monospace;
+    color: #333;
+    z-index: 1;
+}
+.cycle-bar-fg.cycle-0 { background: linear-gradient(90deg, #ccc, #999); }
+.cycle-bar-fg.cycle-1 { background: linear-gradient(90deg, #79aec8, #417690); }
+.cycle-bar-fg.cycle-2 { background: linear-gradient(90deg, #5cb85c, #3d8b3d); }
+.cycle-bar-fg.cycle-3 { background: linear-gradient(90deg, #f0ad4e, #c98c30); }
+.cycle-bar-fg.cycle-4 { background: linear-gradient(90deg, #d9534f, #ac3a37); }
+
+.speed-block {
+    background: #e8f4f8;
+    border-left: 4px solid #417690;
+    padding: 10px 12px;
+    margin-top: 12px;
+    border-radius: 4px;
+}
+.speed-block .speed-row {
+    display: flex;
+    justify-content: space-between;
+    margin: 3px 0;
+    font-size: 13px;
+}
+.speed-block .speed-row .num {
+    font-family: monospace;
+    font-weight: bold;
+    color: #417690;
+}
+.eta-row {
+    background: #fff8e1;
+    border-left: 4px solid #f0ad4e;
+    padding: 10px 12px;
+    margin-top: 8px;
+    border-radius: 4px;
+    font-size: 13px;
+}
+.refresh-info {
+    color: #888;
+    font-size: 12px;
+    margin-bottom: 16px;
+}
+</style>
+
+<div class="refresh-info">
+    Обновлено: {{ now|date:"Y-m-d H:i:s" }} (UTC) — обнови страницу для актуальных данных.
+</div>
+
+<div class="parser-stats-grid">
+    {% for src in srcs %}
+    <div class="parser-card">
+        <h2>{{ src.icon }} {{ src.title }}</h2>
+
+        <div style="text-align: center; margin: 12px 0;">
+            <div class="big-number green">{{ src.full_cycles_completed }}</div>
+            <div style="color: #666;">полных циклов завершено</div>
+            <div style="color: #999; font-size: 11px;">макс на одной записи: {{ src.max_cycle }}</div>
+        </div>
+
+        <h3>📊 Прогресс циклов сейчас</h3>
+        {% for c in src.cycles_breakdown %}
+        <div class="cycle-row">
+            <div class="cycle-label">
+                {% if c.cycle == 0 %}не парс.{% else %}{{ c.cycle }} цикл{% endif %}
+            </div>
+            <div class="cycle-bar-bg">
+                <div class="cycle-bar-fg cycle-{% if c.cycle <= 4 %}{{ c.cycle }}{% else %}4{% endif %}" style="width: {{ c.pct|floatformat:1 }}%;"></div>
+                <div class="cycle-bar-text">{{ c.count|intcomma }} ({{ c.pct|floatformat:1 }}%)</div>
+            </div>
+        </div>
+        {% endfor %}
+
+        <div class="speed-block">
+            <div style="font-weight: bold; margin-bottom: 6px;">⚡ Скорость парсинга</div>
+            <div class="speed-row"><span>За час:</span><span class="num">{{ src.parsed_per_hour|intcomma }}</span></div>
+            <div class="speed-row"><span>За сутки:</span><span class="num">{{ src.parsed_per_day|intcomma }}</span></div>
+            <div class="speed-row"><span>За неделю:</span><span class="num">{{ src.parsed_per_week|intcomma }}</span></div>
+            <div class="speed-row" style="border-top: 1px dashed #aaa; margin-top: 6px; padding-top: 6px;">
+                <span>За 30 дней:</span>
+                <span class="num">{% for a in src.activity %}{% if a.label == "за 30 дней" %}{{ a.count|intcomma }}{% endif %}{% endfor %}</span>
+            </div>
+        </div>
+
+        {% if src.eta_days %}
+        <div class="eta-row">
+            🎯 До цикла №{{ src.next_cycle }} осталось:
+            <strong>{{ src.remaining_to_next_cycle|intcomma }}</strong> фильмов
+            <br>
+            При текущей скорости ≈ <strong>{{ src.eta_days }} дн.</strong>
+        </div>
+        {% endif %}
+
+        <h3>🔢 Текущие статусы</h3>
+        <table>
+            <tr><td class="label">Всего записей</td><td class="value">{{ src.total|intcomma }}</td></tr>
+            <tr><td class="label">Хоть раз парсилось</td><td class="value">{{ src.ever_parsed|intcomma }} ({{ src.ever_parsed_pct|floatformat:1 }}%)</td></tr>
+            <tr><td class="label">Никогда не парсилось</td><td class="value">{{ src.never_parsed|intcomma }} ({{ src.never_parsed_pct|floatformat:1 }}%)</td></tr>
+            <tr><td class="label">not_parsed</td><td class="value">{{ src.not_parsed|intcomma }}</td></tr>
+            <tr><td class="label">in_progress</td><td class="value">{{ src.in_progress|intcomma }}</td></tr>
+            <tr><td class="label">parsed</td><td class="value">{{ src.parsed_now|intcomma }}</td></tr>
+        </table>
+
+        <h3>⏰ Временные метки</h3>
+        <table>
+            <tr><td class="label">Самый давний парсинг</td><td class="value">{{ src.oldest_parse|date:"Y-m-d H:i"|default:"—" }}</td></tr>
+            <tr><td class="label">Самый свежий парсинг</td><td class="value">{{ src.newest_parse|date:"Y-m-d H:i"|default:"—" }}</td></tr>
+        </table>
+    </div>
+    {% endfor %}
+</div>
+
+<div style="text-align: center; padding: 16px; color: #666;">
+    <a href="/admin/" style="color: #417690;">← Назад в админку</a>
+    &nbsp;|&nbsp;
+    <a href="javascript:location.reload()" style="color: #417690;">🔄 Обновить</a>
+</div>
+
+{% endblock %}

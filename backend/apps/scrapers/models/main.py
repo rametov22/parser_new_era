@@ -23,6 +23,9 @@ class YtConnectContent(models.Model):
     parsing_status = models.CharField(
         max_length=20, choices=PARSING_STATUS_CHOICES, default="not_parsed"
     )
+    parsing_status_player = models.CharField(
+        max_length=20, choices=PARSING_STATUS_CHOICES, default="not_parsed"
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

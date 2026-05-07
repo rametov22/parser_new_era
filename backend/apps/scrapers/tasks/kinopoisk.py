@@ -305,9 +305,13 @@ def parse_single_film_task(self, kp_id, href, cookies=None):
             name_original,
         )
 
-        content_obj.is_parsed_kp = "parsed"
-        content_obj.parsed_at_kp = timezone.now()
-        content_obj.save(update_fields=("is_parsed_kp", "parsed_at_kp"))
+        from django.db.models import F
+
+        models.Content.objects.filter(pk=content_obj.pk).update(
+            is_parsed_kp="parsed",
+            parsed_at_kp=timezone.now(),
+            parse_count_kp=F("parse_count_kp") + 1,
+        )
 
     except Exception as e:
         print(f"Ошибка в фильме {kp_id}, {e}")

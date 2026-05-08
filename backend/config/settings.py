@@ -181,6 +181,8 @@ CELERY_TASK_DEFAULT_QUEUE = "default"
 CELERY_TASK_ROUTES = {
     "apps.scrapers.tasks.vavada.parse_single_iframe": {"queue": "vavada_queue"},
     "apps.scrapers.tasks.vavada.spawn_iframe_parsers": {"queue": "default"},
+    "apps.scrapers.tasks.vavada_serials.spawn_vavada_serials": {"queue": "default"},
+    "apps.scrapers.tasks.vavada_serials.parse_vavada_serial": {"queue": "vavada_queue"},
     "apps.scrapers.tasks.kinopoisk.parse_page_list_task": {"queue": "kp_pages_queue"},
     "apps.scrapers.tasks.kinopoisk.parse_single_film_task": {"queue": "kp_films_queue"},
     "apps.scrapers.tasks.kinopoisk_scheduler.discover_task": {"queue": "kp_pages_queue"},

@@ -197,6 +197,19 @@ def expire_stuck_vavada_task():
 )
 def parse_single_iframe(self, kp_id):
     """Парсинг одного конкретного фильма через Selenium"""
+    # Идемпотентность: если задача доставлена повторно (acks_late + рестарт
+    # воркера), пропускаем, чтобы не накручивать parse_count_ru.
+    existing = Content.objects.filter(kino_poisk_id=kp_id).only(
+        "is_parsed_ru", "parsed_at_ru"
+    ).first()
+    if (
+        existing
+        and existing.is_parsed_ru == "parsed"
+        and existing.parsed_at_ru
+        and (timezone.now() - existing.parsed_at_ru) < timedelta(minutes=5)
+    ):
+        return f"Skipped {kp_id} (recently parsed)"
+
     driver = None
     start_time = timezone.now()
     try:

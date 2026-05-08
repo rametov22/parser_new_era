@@ -1,17 +1,21 @@
 from datetime import timedelta
 
+from django.conf import settings
 from django.contrib.admin.views.decorators import staff_member_required
-from django.db.models import Count, Max, Min
+from django.db.models import Count, Max, Min, Q
 from django.shortcuts import render
 from django.utils import timezone
 
-from .models import Content
+from .models import Content, ScraperLog
 
 
 def _stats_for_source(source):
     """
     Считает статистику по одному источнику парсинга.
     source: "kp" / "ru" / "uz" — суффиксы полей is_parsed_*, parsed_at_*, parse_count_*.
+
+    Для ru (vavada) — статистика считается ТОЛЬКО по фильмам в окне премьеры
+    (settings.PREMIERE дней), так как vavada не парсит все фильмы базы.
     """
     now = timezone.now()
 
@@ -20,6 +24,18 @@ def _stats_for_source(source):
     count_field = f"parse_count_{source}"
 
     qs = Content.objects.all()
+
+    # Vavada работает только с премьерами в окне последних PREMIERE дней.
+    scope_note = None
+    if source == "ru":
+        today = now.date()
+        premiere_days = getattr(settings, "PREMIERE", 365)
+        start_date = today - timedelta(days=premiere_days)
+        qs = qs.filter(
+            Q(premiere__range=(start_date, today))
+            | Q(premiere_ru__range=(start_date, today))
+        )
+        scope_note = f"только фильмы с премьерой за последние {premiere_days} дн."
 
     total = qs.count()
     not_parsed = qs.filter(**{status_field: "not_parsed"}).count()
@@ -85,6 +101,7 @@ def _stats_for_source(source):
 
     return {
         "source": source,
+        "scope_note": scope_note,
         "total": total,
         "not_parsed": not_parsed,
         "in_progress": in_progress,
@@ -108,6 +125,64 @@ def _stats_for_source(source):
     }
 
 
+def _stats_for_serial_refresh():
+    """
+    Статистика лёгкого обновления сериалов (vavada_serials.spawn_vavada_serials).
+    Фильтрует только сериалы с уже найденным film_content в окне 8 лет.
+    """
+    today = timezone.now().date()
+    now = timezone.now()
+    refresh_days = 7
+    year_window = 8
+    current_year = today.year
+    start_year = current_year - year_window
+    cut_date = today - timedelta(days=refresh_days)
+
+    base_qs = Content.objects.filter(
+        is_serial=True,
+        film_content__isnull=False,
+        year_production__range=(start_year, current_year),
+    )
+
+    total = base_qs.count()
+    waiting = base_qs.filter(
+        last_update__lte=cut_date,
+        is_parsed_ru="parsed",
+    ).count()
+    fresh = base_qs.filter(last_update__gt=cut_date).count()
+    fresh_pct = (fresh / total * 100) if total else 0
+
+    # Активность из ScraperLog (только успехи серийного refresh)
+    activity = []
+    for label, delta in [
+        ("за час", timedelta(hours=1)),
+        ("за сутки", timedelta(days=1)),
+        ("за 7 дней", timedelta(days=7)),
+        ("за 30 дней", timedelta(days=30)),
+    ]:
+        n = ScraperLog.objects.filter(
+            task_name__startswith="Vavada serial refresh",
+            status="success",
+            created_at__gte=now - delta,
+        ).count()
+        activity.append({"label": label, "count": n})
+
+    per_day = activity[1]["count"]
+    eta_days = round(waiting / per_day, 1) if per_day > 0 else None
+
+    return {
+        "total": total,
+        "waiting": waiting,
+        "fresh": fresh,
+        "fresh_pct": fresh_pct,
+        "activity": activity,
+        "per_day": per_day,
+        "eta_days": eta_days,
+        "refresh_days": refresh_days,
+        "year_window": year_window,
+    }
+
+
 @staff_member_required
 def parser_stats(request):
     """Дашборд состояния парсеров."""
@@ -125,5 +200,9 @@ def parser_stats(request):
     return render(
         request,
         "scrapers/parser_stats.html",
-        {"srcs": srcs, "now": timezone.now()},
+        {
+            "srcs": srcs,
+            "serial_refresh": _stats_for_serial_refresh(),
+            "now": timezone.now(),
+        },
     )

@@ -168,6 +168,20 @@ def parse_single_film_task(self, kp_id, href, cookies=None):
             cookies = json.load(f)
     film_href = f"https://www.kinopoisk.ru{href}"
 
+    # Идемпотентность: если задача доставлена повторно (acks_late + рестарт
+    # воркера), статус будет уже "parsed" — пропускаем, чтобы не делать
+    # двойной парсинг и не накручивать parse_count_kp.
+    existing = models.Content.objects.filter(kino_poisk_id=kp_id).only(
+        "is_parsed_kp", "parsed_at_kp"
+    ).first()
+    if (
+        existing
+        and existing.is_parsed_kp == "parsed"
+        and existing.parsed_at_kp
+        and (timezone.now() - existing.parsed_at_kp) < dt.timedelta(minutes=5)
+    ):
+        return
+
     driver = None
     try:
         try:

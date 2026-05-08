@@ -246,6 +246,12 @@
         <div class="parser-card">
             <h2>{{ src.icon }} {{ src.title }}</h2>
 
+            {% if src.scope_note %}
+            <div style="background: rgba(110,195,224,0.10); border-left: 3px solid var(--accent); padding: 8px 12px; margin-bottom: 12px; font-size: 12px; color: var(--card-fg); border-radius: 4px;">
+                ℹ️ Скоуп: {{ src.scope_note }}
+            </div>
+            {% endif %}
+
             <div class="cycle-summary">
                 <div class="big-number">{{ src.full_cycles_completed }}</div>
                 <div class="label-main">полных циклов завершено</div>
@@ -303,6 +309,54 @@
         </div>
         {% endfor %}
     </div>
+
+    {# === Refresh сериалов === #}
+    {% with sr=serial_refresh %}
+    <div class="parser-card" style="margin-bottom: 24px;">
+        <h2>🔄 Обновление сериалов (vavada_serials)</h2>
+
+        <div style="background: rgba(110,195,224,0.10); border-left: 3px solid var(--accent); padding: 8px 12px; margin-bottom: 16px; font-size: 12px; color: var(--card-fg); border-radius: 4px;">
+            ℹ️ Лёгкий refresh-парсер: для сериалов с уже найденным <code>film_content</code>
+            в окне последних {{ sr.year_window }} лет, чтобы видеть новые сезоны/эпизоды.
+            Цикл обновления — каждые {{ sr.refresh_days }} дней.
+        </div>
+
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 16px;">
+            <div style="text-align: center; padding: 14px; background: rgba(127,127,127,0.08); border-radius: 6px;">
+                <div class="big-number" style="font-size: 28px;">{{ sr.total|intcomma }}</div>
+                <div style="color: var(--card-muted); font-size: 12px;">всего сериалов</div>
+            </div>
+            <div style="text-align: center; padding: 14px; background: rgba(92,184,92,0.10); border-radius: 6px;">
+                <div class="big-number" style="font-size: 28px; color: #5cb85c;">{{ sr.fresh|intcomma }}</div>
+                <div style="color: var(--card-muted); font-size: 12px;">свежие ({{ sr.fresh_pct|floatformat:1 }}%)</div>
+                <div style="color: var(--card-muted); font-size: 10px;">обновлены за {{ sr.refresh_days }} дн.</div>
+            </div>
+            <div style="text-align: center; padding: 14px; background: rgba(240,173,78,0.12); border-radius: 6px;">
+                <div class="big-number" style="font-size: 28px; color: #f0ad4e;">{{ sr.waiting|intcomma }}</div>
+                <div style="color: var(--card-muted); font-size: 12px;">ждут обновления</div>
+                <div style="color: var(--card-muted); font-size: 10px;">last_update &gt; {{ sr.refresh_days }} дн.</div>
+            </div>
+            <div style="text-align: center; padding: 14px; background: rgba(110,195,224,0.10); border-radius: 6px;">
+                <div class="big-number" style="font-size: 28px;">{{ sr.per_day|intcomma }}</div>
+                <div style="color: var(--card-muted); font-size: 12px;">обновлено за сутки</div>
+                {% if sr.eta_days %}
+                <div style="color: var(--card-muted); font-size: 10px;">очистка очереди ≈ {{ sr.eta_days }} дн.</div>
+                {% endif %}
+            </div>
+        </div>
+
+        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;">
+            {% for a in sr.activity %}
+            <div style="text-align: center; padding: 10px; background: rgba(127,127,127,0.06); border-radius: 4px;">
+                <div style="font-family: ui-monospace, monospace; font-weight: bold; font-size: 16px; color: var(--accent);">
+                    {{ a.count|intcomma }}
+                </div>
+                <div style="color: var(--card-muted); font-size: 11px; text-transform: uppercase;">{{ a.label }}</div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endwith %}
 
     <div class="bottom-nav">
         <a href="/admin/">← Назад в админку</a>

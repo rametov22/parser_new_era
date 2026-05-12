@@ -321,7 +321,12 @@ def parse_single_film_task(self, kp_id, href, cookies=None):
 
         from django.db.models import F
 
-        models.Content.objects.filter(pk=content_obj.pk).update(
+        # Атомарный финал: инкрементируем счётчик ТОЛЬКО если статус всё
+        # ещё in_progress. Если другой воркер уже завершил (redelivery)
+        # — статус будет "parsed", UPDATE затронет 0 строк, дубля не будет.
+        models.Content.objects.filter(
+            pk=content_obj.pk, is_parsed_kp="in_progress"
+        ).update(
             is_parsed_kp="parsed",
             parsed_at_kp=timezone.now(),
             parse_count_kp=F("parse_count_kp") + 1,

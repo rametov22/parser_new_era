@@ -332,13 +332,11 @@ def parse_single_iframe(self, kp_id):
                     except Exception:
                         pass
 
+        # Сначала сохраняем все парсенные поля БЕЗ смены статуса,
+        # чтобы атомарный финал проверил исходный статус "in_progress".
         film.player_id = int(variyt_player_id) if variyt_player_id else None
         film.player_variables = player_list
         film.last_update = timezone.now()
-        film.is_parsed_ru = "parsed"
-        film.parsed_at_ru = timezone.now()
-
-        # Сохраняем всё в основную базу (managed=False модель это позволяет)
         film.save(
             update_fields=[
                 "film_content",
@@ -349,15 +347,17 @@ def parse_single_iframe(self, kp_id):
                 "last_season",
                 "last_episode",
                 "last_update",
-                "is_parsed_ru",
-                "parsed_at_ru",
             ]
         )
 
-        # Инкрементируем счётчик циклов парсинга vavada атомарно
+        # Атомарный финал: переводим в parsed + инкрементируем счётчик
+        # ТОЛЬКО если статус ещё in_progress. При redelivery второй воркер
+        # увидит уже "parsed" → UPDATE затронет 0 строк, дубля не будет.
         from django.db.models import F as _F
-        Content.objects.filter(pk=film.pk).update(
-            parse_count_ru=_F("parse_count_ru") + 1
+        Content.objects.filter(pk=film.pk, is_parsed_ru="in_progress").update(
+            is_parsed_ru="parsed",
+            parsed_at_ru=timezone.now(),
+            parse_count_ru=_F("parse_count_ru") + 1,
         )
 
         exec_time = (timezone.now() - start_time).total_seconds()

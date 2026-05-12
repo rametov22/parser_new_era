@@ -188,6 +188,11 @@ CELERY_TASK_ROUTES = {
     "apps.scrapers.tasks.kinopoisk_scheduler.discover_task": {"queue": "kp_pages_queue"},
     "apps.scrapers.tasks.kinopoisk_scheduler.expire_task": {"queue": "default"},
     "apps.scrapers.tasks.kinopoisk_scheduler.refill_task": {"queue": "default"},
+    "apps.scrapers.tasks.yangitv.collect_all_ids": {"queue": "default"},
+    "apps.scrapers.tasks.yangitv.spawn_yt_connect": {"queue": "default"},
+    "apps.scrapers.tasks.yangitv.parse_yt_connect": {"queue": "default"},
+    "apps.scrapers.tasks.yangitv.spawn_yt_movie_urls": {"queue": "default"},
+    "apps.scrapers.tasks.yangitv.parse_yt_movie_url": {"queue": "default"},
 }
 
 PREMIERE = config("premiere", cast=int, default=40)

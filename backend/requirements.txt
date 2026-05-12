@@ -17,3 +17,4 @@ boto3==1.42.24
 djangorestframework==3.16.1
 django-modeltranslation==0.19.17
 regex==2025.11.3
+cryptography==46.0.3

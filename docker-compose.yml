@@ -40,9 +40,9 @@ services:
 
   celery_vavada:
     <<: *backend-defaults
-    # --max-tasks-per-child=50: каждый дочерний процесс перезапускается после 50 задач,
-    # чтобы не накапливать утечки потоков от Selenium/Chrome.
-    command: celery -A config worker -Q vavada_queue --concurrency=3 -n vavada_worker@%h -l info --max-tasks-per-child=30
+    # --max-tasks-per-child=20: чаще перезапуск процесса = меньше шанс
+    # накопления zombie-Chrome и thread leaks.
+    command: celery -A config worker -Q vavada_queue --concurrency=2 -n vavada_worker@%h -l info --max-tasks-per-child=20
     shm_size: "4gb"
     pids_limit: 4096
     depends_on:

@@ -37,21 +37,21 @@ logger = logging.getLogger("vavada_serials")
 logger.setLevel(logging.INFO)
 
 
-VAVADA_QUEUE_NAME = "vavada_queue"
-VAVADA_SERIALS_QUEUE_THRESHOLD = 500
+VAVADA_SERIALS_QUEUE_NAME = "vavada_serials_queue"
+VAVADA_SERIALS_QUEUE_THRESHOLD = 1000
 VAVADA_SERIALS_BATCH = 200
 SERIALS_REFRESH_DAYS = 7
 SERIALS_YEAR_WINDOW = 8
 
 
-def _vavada_queue_length():
+def _vavada_serials_queue_length():
     r = redis.Redis(
         host=settings.REDIS_HOST,
         port=int(settings.REDIS_PORT),
         password=settings.REDIS_PASSWORD,
         decode_responses=True,
     )
-    return r.llen(VAVADA_QUEUE_NAME)
+    return r.llen(VAVADA_SERIALS_QUEUE_NAME)
 
 
 @shared_task(queue="default")
@@ -62,10 +62,11 @@ def spawn_vavada_serials():
     Атомарно обновляет last_update чтобы повторный запуск
     не подхватил те же фильмы.
     """
-    queue_len = _vavada_queue_length()
+    queue_len = _vavada_serials_queue_length()
     if queue_len >= VAVADA_SERIALS_QUEUE_THRESHOLD:
         logger.info(
-            f"[serials-dispatcher] очередь {queue_len} >= {VAVADA_SERIALS_QUEUE_THRESHOLD}, пропуск"
+            f"[serials-dispatcher] очередь {VAVADA_SERIALS_QUEUE_NAME}: "
+            f"{queue_len} >= {VAVADA_SERIALS_QUEUE_THRESHOLD}, пропуск"
         )
         return 0
 
@@ -105,7 +106,7 @@ def spawn_vavada_serials():
 
 @shared_task(
     bind=True,
-    queue="vavada_queue",
+    queue="vavada_serials_queue",
     max_retries=2,
     rate_limit="10/m",
     acks_late=True,

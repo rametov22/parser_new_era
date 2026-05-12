@@ -49,6 +49,17 @@ services:
       redis:
         condition: service_healthy
 
+  celery_vavada_serials:
+    <<: *backend-defaults
+    # Отдельный воркер для лёгкого refresh сериалов на iframe.cloud.
+    # Не зависит от celery_vavada (полный парсинг премьер).
+    command: celery -A config worker -Q vavada_serials_queue --concurrency=2 -n vavada_serials_worker@%h -l info --max-tasks-per-child=20
+    shm_size: "4gb"
+    pids_limit: 4096
+    depends_on:
+      redis:
+        condition: service_healthy
+
   celery_kp_pages:
     <<: *backend-defaults
     command: celery -A config worker -Q kp_pages_queue --concurrency=1 -n kp_pages_worker@%h -l info --max-tasks-per-child=10

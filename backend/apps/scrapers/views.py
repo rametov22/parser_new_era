@@ -145,10 +145,11 @@ def _stats_for_serial_refresh():
     )
 
     total = base_qs.count()
-    waiting = base_qs.filter(
-        last_update__lte=cut_date,
-        is_parsed_ru="parsed",
-    ).count()
+    waiting = (
+        base_qs.filter(last_update__lte=cut_date)
+        .exclude(is_parsed_ru="in_progress")
+        .count()
+    )
     fresh = base_qs.filter(last_update__gt=cut_date).count()
     fresh_pct = (fresh / total * 100) if total else 0
 

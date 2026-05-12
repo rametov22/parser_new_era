@@ -74,14 +74,17 @@ def spawn_vavada_serials():
     current_year = today.year
     start_year = current_year - SERIALS_YEAR_WINDOW
 
+    # Берём любой сериал с film_content и давним last_update, не зависим от
+    # статуса главного vavada-парсера. Исключаем только in_progress, чтобы
+    # не пересекаться с активно парсящимися сейчас.
     kp_ids = list(
         Content.objects.filter(
             is_serial=True,
             film_content__isnull=False,
             year_production__range=(start_year, current_year),
             last_update__lte=cut_date,
-            is_parsed_ru="parsed",
         )
+        .exclude(is_parsed_ru="in_progress")
         .order_by("last_update")
         .values_list("kino_poisk_id", flat=True)[:VAVADA_SERIALS_BATCH]
     )

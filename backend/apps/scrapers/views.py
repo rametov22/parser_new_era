@@ -6,7 +6,7 @@ from django.db.models import Count, Max, Min, Q
 from django.shortcuts import render
 from django.utils import timezone
 
-from .models import Content, ScraperLog
+from .models import Content, ScraperLog, YtConnectContent
 
 
 def _stats_for_source(source):
@@ -184,6 +184,99 @@ def _stats_for_serial_refresh():
     }
 
 
+def _stats_for_yangitv():
+    """
+    Статистика трёх фаз yangi.tv:
+      1. Сбор ID  (YtConnectContent создание)
+      2. Connect  (parsing_status: not_parsed → parsed)
+      3. Movie URLs (parsing_status_player: not_parsed → parsed)
+    """
+    now = timezone.now()
+
+    total = YtConnectContent.objects.count()
+
+    # Фаза 2: connect
+    connect_not_parsed = YtConnectContent.objects.filter(
+        parsing_status="not_parsed"
+    ).count()
+    connect_in_progress = YtConnectContent.objects.filter(
+        parsing_status="in_progress"
+    ).count()
+    connect_parsed = YtConnectContent.objects.filter(parsing_status="parsed").count()
+
+    # Фаза 3: movie urls
+    url_not_parsed = YtConnectContent.objects.filter(
+        parsing_status="parsed", parsing_status_player="not_parsed"
+    ).count()
+    url_in_progress = YtConnectContent.objects.filter(
+        parsing_status_player="in_progress"
+    ).count()
+    url_parsed = YtConnectContent.objects.filter(
+        parsing_status_player="parsed"
+    ).count()
+
+    # Сколько Content связано с yangi.tv (id_uz заполнен)
+    content_linked = Content.objects.filter(id_uz__isnull=False).count()
+
+    # Активность по ScraperLog
+    def _activity_for_prefix(prefix):
+        out = []
+        for label, delta in [
+            ("за час", timedelta(hours=1)),
+            ("за сутки", timedelta(days=1)),
+            ("за 7 дней", timedelta(days=7)),
+            ("за 30 дней", timedelta(days=30)),
+        ]:
+            n = ScraperLog.objects.filter(
+                task_name__startswith=prefix,
+                status="success",
+                created_at__gte=now - delta,
+            ).count()
+            out.append({"label": label, "count": n})
+        return out
+
+    connect_activity = _activity_for_prefix("YT connect ")
+    url_activity = _activity_for_prefix("YT movie url ")
+
+    # Когда последний раз collect_all_ids запускался
+    last_collect = (
+        ScraperLog.objects.filter(task_name="YT collect_all_ids", status="success")
+        .order_by("-created_at")
+        .first()
+    )
+
+    # ETA
+    connect_per_day = connect_activity[1]["count"]
+    url_per_day = url_activity[1]["count"]
+    connect_eta_days = (
+        round(connect_not_parsed / connect_per_day, 1) if connect_per_day > 0 else None
+    )
+    url_eta_days = (
+        round(url_not_parsed / url_per_day, 1) if url_per_day > 0 else None
+    )
+
+    return {
+        "total": total,
+        "connect_not_parsed": connect_not_parsed,
+        "connect_in_progress": connect_in_progress,
+        "connect_parsed": connect_parsed,
+        "connect_pct": (connect_parsed / total * 100) if total else 0,
+        "url_not_parsed": url_not_parsed,
+        "url_in_progress": url_in_progress,
+        "url_parsed": url_parsed,
+        "url_pct": (url_parsed / total * 100) if total else 0,
+        "content_linked": content_linked,
+        "connect_activity": connect_activity,
+        "url_activity": url_activity,
+        "connect_per_day": connect_per_day,
+        "url_per_day": url_per_day,
+        "connect_eta_days": connect_eta_days,
+        "url_eta_days": url_eta_days,
+        "last_collect": last_collect.created_at if last_collect else None,
+        "last_collect_message": last_collect.message if last_collect else None,
+    }
+
+
 @staff_member_required
 def parser_stats(request):
     """Дашборд состояния парсеров."""
@@ -204,6 +297,7 @@ def parser_stats(request):
         {
             "srcs": srcs,
             "serial_refresh": _stats_for_serial_refresh(),
+            "yangitv": _stats_for_yangitv(),
             "now": timezone.now(),
         },
     )

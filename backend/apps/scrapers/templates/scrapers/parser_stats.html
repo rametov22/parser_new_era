@@ -358,6 +358,96 @@
     </div>
     {% endwith %}
 
+    {# === Yangi.tv три фазы === #}
+    {% with yt=yangitv %}
+    <div class="parser-card" style="margin-bottom: 24px;">
+        <h2>🇺🇿 Yangi.tv — три фазы парсинга</h2>
+
+        <div style="background: rgba(110,195,224,0.10); border-left: 3px solid var(--accent); padding: 8px 12px; margin-bottom: 16px; font-size: 12px; color: var(--card-fg); border-radius: 4px;">
+            ℹ️ Поток: <strong>1) сбор ID</strong> → <strong>2) связь по name_ru/year</strong> → <strong>3) расшифровка URL плеера</strong>.
+            {% if yt.last_collect %}
+                Последний сбор: <strong>{{ yt.last_collect|date:"Y-m-d H:i" }}</strong> ({{ yt.last_collect_message }}).
+            {% else %}
+                Сбор ID ещё не запускался.
+            {% endif %}
+        </div>
+
+        {# Общая сводка #}
+        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 20px;">
+            <div style="text-align: center; padding: 14px; background: rgba(127,127,127,0.08); border-radius: 6px;">
+                <div class="big-number" style="font-size: 28px;">{{ yt.total|intcomma }}</div>
+                <div style="color: var(--card-muted); font-size: 12px;">всего собранных ID</div>
+            </div>
+            <div style="text-align: center; padding: 14px; background: rgba(92,184,92,0.10); border-radius: 6px;">
+                <div class="big-number" style="font-size: 28px; color: #5cb85c;">{{ yt.content_linked|intcomma }}</div>
+                <div style="color: var(--card-muted); font-size: 12px;">связано с Content</div>
+                <div style="color: var(--card-muted); font-size: 10px;">id_uz заполнен</div>
+            </div>
+            <div style="text-align: center; padding: 14px; background: rgba(110,195,224,0.10); border-radius: 6px;">
+                <div class="big-number" style="font-size: 28px;">{{ yt.url_parsed|intcomma }}</div>
+                <div style="color: var(--card-muted); font-size: 12px;">URL расшифрованы</div>
+                <div style="color: var(--card-muted); font-size: 10px;">{{ yt.url_pct|floatformat:1 }}% от всех</div>
+            </div>
+        </div>
+
+        {# Двухколоночная разбивка по фазам #}
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+
+            {# Фаза 2: Connect #}
+            <div style="padding: 14px; background: rgba(127,127,127,0.06); border-radius: 6px; border-left: 3px solid #79aec8;">
+                <h3 style="margin-top: 0;">Фаза 2 — Connect (matching по name_ru/year)</h3>
+
+                <table>
+                    <tr><td class="label">not_parsed (ждут)</td><td class="value">{{ yt.connect_not_parsed|intcomma }}</td></tr>
+                    <tr><td class="label">in_progress (в работе)</td><td class="value">{{ yt.connect_in_progress|intcomma }}</td></tr>
+                    <tr><td class="label">parsed (готово)</td><td class="value">{{ yt.connect_parsed|intcomma }} ({{ yt.connect_pct|floatformat:1 }}%)</td></tr>
+                </table>
+
+                <div class="speed-block" style="margin-top: 10px;">
+                    <div class="speed-block-title">⚡ Скорость connect</div>
+                    {% for a in yt.connect_activity %}
+                    <div class="speed-row"><span>{{ a.label }}:</span><span class="num">{{ a.count|intcomma }}</span></div>
+                    {% endfor %}
+                </div>
+
+                {% if yt.connect_eta_days %}
+                <div class="eta-row" style="margin-top: 8px;">
+                    🎯 До завершения connect:
+                    <strong>{{ yt.connect_not_parsed|intcomma }}</strong> ID
+                    <br>При текущей скорости ≈ <strong>{{ yt.connect_eta_days }} дн.</strong>
+                </div>
+                {% endif %}
+            </div>
+
+            {# Фаза 3: Movie URLs #}
+            <div style="padding: 14px; background: rgba(127,127,127,0.06); border-radius: 6px; border-left: 3px solid #5cb85c;">
+                <h3 style="margin-top: 0;">Фаза 3 — Movie URLs (AES-дешифрация)</h3>
+
+                <table>
+                    <tr><td class="label">not_parsed (ждут)</td><td class="value">{{ yt.url_not_parsed|intcomma }}</td></tr>
+                    <tr><td class="label">in_progress (в работе)</td><td class="value">{{ yt.url_in_progress|intcomma }}</td></tr>
+                    <tr><td class="label">parsed (готово)</td><td class="value">{{ yt.url_parsed|intcomma }} ({{ yt.url_pct|floatformat:1 }}%)</td></tr>
+                </table>
+
+                <div class="speed-block" style="margin-top: 10px;">
+                    <div class="speed-block-title">⚡ Скорость URLs</div>
+                    {% for a in yt.url_activity %}
+                    <div class="speed-row"><span>{{ a.label }}:</span><span class="num">{{ a.count|intcomma }}</span></div>
+                    {% endfor %}
+                </div>
+
+                {% if yt.url_eta_days %}
+                <div class="eta-row" style="margin-top: 8px;">
+                    🎯 До завершения URLs:
+                    <strong>{{ yt.url_not_parsed|intcomma }}</strong> фильмов
+                    <br>При текущей скорости ≈ <strong>{{ yt.url_eta_days }} дн.</strong>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% endwith %}
+
     <div class="bottom-nav">
         <a href="/admin/">← Назад в админку</a>
         |

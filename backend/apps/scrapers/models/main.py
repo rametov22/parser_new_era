@@ -15,6 +15,7 @@ class YtConnectContent(models.Model):
         ("not_parsed", "Not parsed"),
         ("in_progress", "In Progress"),
         ("parsed", "Parsed"),
+        ("failed", "Failed (too many attempts)"),
     ]
 
     content_id = models.PositiveIntegerField(unique=True)
@@ -26,6 +27,8 @@ class YtConnectContent(models.Model):
     parsing_status_player = models.CharField(
         max_length=20, choices=PARSING_STATUS_CHOICES, default="not_parsed"
     )
+    connect_fail_count = models.PositiveSmallIntegerField(default=0)
+    player_fail_count = models.PositiveSmallIntegerField(default=0)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

@@ -21,11 +21,14 @@
 import base64
 import logging
 import time
+from datetime import timedelta
 
 import requests
 from celery import shared_task
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from decouple import config
+from django.db.models import F
+from django.utils import timezone
 
 from ..models import YtConnectContent, ScraperLog, Content
 from ..utils import parse_age
@@ -49,9 +52,19 @@ YT_AES_IV = bytes.fromhex(
     config("YT_AES_IV_HEX", default="596633736a567a6d694c674157383361")
 )
 
-# Размер батча для диспетчеров
-CONNECT_BATCH = 50
-MOVIE_URL_BATCH = 50
+# Размер батча для диспетчеров — небольшой, чтобы не давить API
+CONNECT_BATCH = 20
+MOVIE_URL_BATCH = 20
+
+# Тайминги — щадящий режим, не торопимся
+HTTP_TIMEOUT = 60  # на медленные ответы API
+PAGE_SLEEP = 5  # пауза между страницами в collect_all_ids
+
+# После N неудачных попыток фильм помечается failed и пропускается.
+MAX_FAIL_ATTEMPTS = 5
+
+# Recovery — сбрасывать застрявший in_progress старше N минут.
+IN_PROGRESS_STUCK_MINUTES = 30
 
 
 def _headers():
@@ -60,6 +73,43 @@ def _headers():
         "Authorization": f"Bearer {YT_BEARER_TOKEN}",
         "Accept": "application/json",
     }
+
+
+def _record_yt_failure(content_id, phase, message):
+    """
+    Инкрементирует счётчик ошибок и помечает failed при превышении лимита.
+    phase: "connect" | "player"
+    """
+    if phase == "connect":
+        count_field = "connect_fail_count"
+        status_field = "parsing_status"
+    else:
+        count_field = "player_fail_count"
+        status_field = "parsing_status_player"
+
+    YtConnectContent.objects.filter(content_id=content_id).update(
+        **{count_field: F(count_field) + 1}
+    )
+    rec = YtConnectContent.objects.filter(content_id=content_id).only(count_field).first()
+    fail_count = getattr(rec, count_field, 0) if rec else 0
+
+    if fail_count >= MAX_FAIL_ATTEMPTS:
+        YtConnectContent.objects.filter(content_id=content_id).update(
+            **{status_field: "failed"}
+        )
+        logger.error(
+            f"☠️ {phase}: {content_id} помечен failed после {fail_count} попыток"
+        )
+    else:
+        YtConnectContent.objects.filter(content_id=content_id).update(
+            **{status_field: "not_parsed"}
+        )
+
+    ScraperLog.objects.create(
+        task_name=f"YT {phase} {content_id}",
+        status="error",
+        message=f"[attempt {fail_count}] {message[:480]}",
+    )
 
 
 def _manual_unpad(data: bytes) -> bytes:
@@ -77,8 +127,9 @@ def _manual_unpad(data: bytes) -> bytes:
 def _decrypt_movie_urls(api_data: dict) -> dict:
     """
     Расшифровывает URL'ы из ответа yangi.tv API getMovieUrl.
-    Каждое качество — список base64-зашифрованных кусков, кодируются
-    AES-CBC отдельно по куску, потом склеиваются.
+    Каждое качество — список base64-зашифрованных кусков.
+    Каждый кусок шифруется AES-CBC отдельно с PKCS7-паддингом.
+    Снимаем паддинг с КАЖДОГО куска, потом склеиваем.
     """
     result = {}
     for quality, encrypted_parts in (api_data or {}).items():
@@ -91,10 +142,12 @@ def _decrypt_movie_urls(api_data: dict) -> dict:
                 cipher = Cipher(algorithms.AES(YT_AES_KEY), modes.CBC(YT_AES_IV))
                 decryptor = cipher.decryptor()
                 chunk = decryptor.update(encrypted_chunk) + decryptor.finalize()
+                # PKCS7-паддинг на КАЖДОМ куске — снимаем сразу,
+                # иначе \x10-байты попадут в склейку между кусками.
+                chunk = _manual_unpad(chunk)
                 decrypted_parts.append(chunk)
             full = b"".join(decrypted_parts)
-            clean = _manual_unpad(full)
-            url = clean.decode("utf-8", errors="ignore").strip()
+            url = full.decode("utf-8", errors="ignore").strip()
             if url:
                 quality_name = quality.replace("A", "p")
                 result[quality_name] = url
@@ -122,7 +175,7 @@ def collect_all_ids(self):
         while current_page <= total_pages:
             params = {"page": current_page}
             response = requests.get(
-                url, params=params, headers=_headers(), timeout=15
+                url, params=params, headers=_headers(), timeout=HTTP_TIMEOUT
             )
 
             if response.status_code != 200:
@@ -145,7 +198,7 @@ def collect_all_ids(self):
                     new_ids_count += 1
 
             current_page += 1
-            time.sleep(2)  # вежливая пауза между страницами
+            time.sleep(PAGE_SLEEP)  # вежливая пауза между страницами
 
         ScraperLog.objects.create(
             task_name=task_name,
@@ -191,7 +244,12 @@ def spawn_yt_connect():
 
 
 @shared_task(
-    bind=True, max_retries=3, queue="default", soft_time_limit=30, time_limit=45
+    bind=True,
+    max_retries=3,
+    queue="default",
+    rate_limit="6/m",
+    soft_time_limit=120,
+    time_limit=150,
 )
 def parse_yt_connect(self, content_id):
     """
@@ -222,15 +280,16 @@ def parse_yt_connect(self, content_id):
 
     try:
         response = requests.get(
-            url, params={"content_id": content_id}, headers=_headers(), timeout=15
+            url,
+            params={"content_id": content_id},
+            headers=_headers(),
+            timeout=HTTP_TIMEOUT,
         )
         response.raise_for_status()
         data = response.json().get("data", {})
 
         if not data:
-            YtConnectContent.objects.filter(content_id=content_id).update(
-                parsing_status="not_parsed"
-            )
+            _record_yt_failure(content_id, "connect", "empty data")
             return f"empty data {content_id}"
 
         name_ru = data.get("name_ru")
@@ -265,12 +324,7 @@ def parse_yt_connect(self, content_id):
         return f"ok {content_id} (matched: {bool(content_original)})"
 
     except Exception as exc:
-        YtConnectContent.objects.filter(content_id=content_id).update(
-            parsing_status="not_parsed"
-        )
-        ScraperLog.objects.create(
-            task_name=task_name, status="error", message=str(exc)[:500]
-        )
+        _record_yt_failure(content_id, "connect", str(exc))
         try:
             raise self.retry(exc=exc, countdown=120)
         except self.MaxRetriesExceededError:
@@ -311,7 +365,12 @@ def spawn_yt_movie_urls():
 
 
 @shared_task(
-    bind=True, max_retries=3, queue="default", soft_time_limit=30, time_limit=45
+    bind=True,
+    max_retries=3,
+    queue="default",
+    rate_limit="6/m",
+    soft_time_limit=120,
+    time_limit=150,
 )
 def parse_yt_movie_url(self, content_id):
     """
@@ -324,32 +383,25 @@ def parse_yt_movie_url(self, content_id):
 
     try:
         response = requests.get(
-            url, params={"content_id": content_id}, headers=_headers(), timeout=15
+            url,
+            params={"content_id": content_id},
+            headers=_headers(),
+            timeout=HTTP_TIMEOUT,
         )
         response.raise_for_status()
         api_response = response.json()
 
         if api_response.get("code") != 200:
-            ScraperLog.objects.create(
-                task_name=task_name,
-                status="error",
-                message=f"API code {api_response.get('code')}: {api_response.get('message')}",
-            )
-            YtConnectContent.objects.filter(content_id=content_id).update(
-                parsing_status_player="not_parsed"
+            _record_yt_failure(
+                content_id,
+                "player",
+                f"API code {api_response.get('code')}: {api_response.get('message')}",
             )
             return f"api error {content_id}"
 
         urls = _decrypt_movie_urls(api_response.get("data", {}))
         if not urls:
-            ScraperLog.objects.create(
-                task_name=task_name,
-                status="error",
-                message="no urls decoded",
-            )
-            YtConnectContent.objects.filter(content_id=content_id).update(
-                parsing_status_player="not_parsed"
-            )
+            _record_yt_failure(content_id, "player", "no urls decoded")
             return f"no urls {content_id}"
 
         # Сохраняем в YtConnectContent (локальная техническая БД)
@@ -370,17 +422,41 @@ def parse_yt_movie_url(self, content_id):
         return f"ok {content_id}"
 
     except Exception as exc:
-        YtConnectContent.objects.filter(content_id=content_id).update(
-            parsing_status_player="not_parsed"
-        )
-        ScraperLog.objects.create(
-            task_name=task_name, status="error", message=str(exc)[:500]
-        )
+        _record_yt_failure(content_id, "player", str(exc))
         try:
             raise self.retry(exc=exc, countdown=120)
         except self.MaxRetriesExceededError:
             logger.error(f"☠️ movie-url retries исчерпаны для {content_id}")
             raise
+
+
+# ============================================================
+# 4. EXPIRE — recovery застрявших in_progress
+# ============================================================
+@shared_task(queue="default")
+def expire_yt_stuck():
+    """
+    Сбрасывает в not_parsed записи, зависшие в in_progress дольше
+    IN_PROGRESS_STUCK_MINUTES минут. Используется аналог updated_at —
+    если статус in_progress, но запись давно не обновлялась, значит
+    воркер умер и не закончил работу.
+    """
+    threshold = timezone.now() - timedelta(minutes=IN_PROGRESS_STUCK_MINUTES)
+
+    stuck_connect = YtConnectContent.objects.filter(
+        parsing_status="in_progress",
+        updated_at__lt=threshold,
+    ).update(parsing_status="not_parsed")
+
+    stuck_player = YtConnectContent.objects.filter(
+        parsing_status_player="in_progress",
+        updated_at__lt=threshold,
+    ).update(parsing_status_player="not_parsed")
+
+    logger.info(
+        f"[yt-expire] стак-connect: {stuck_connect}, стак-player: {stuck_player}"
+    )
+    return {"stuck_connect": stuck_connect, "stuck_player": stuck_player}
 
 
 # ============================================================

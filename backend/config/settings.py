@@ -193,6 +193,7 @@ CELERY_TASK_ROUTES = {
     "apps.scrapers.tasks.yangitv.parse_yt_connect": {"queue": "default"},
     "apps.scrapers.tasks.yangitv.spawn_yt_movie_urls": {"queue": "default"},
     "apps.scrapers.tasks.yangitv.parse_yt_movie_url": {"queue": "default"},
+    "apps.scrapers.tasks.yangitv.expire_yt_stuck": {"queue": "default"},
 }
 
 PREMIERE = config("premiere", cast=int, default=40)

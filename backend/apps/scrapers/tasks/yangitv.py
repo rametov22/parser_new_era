@@ -31,7 +31,7 @@ from django.db.models import F
 from django.utils import timezone
 
 from ..models import YtConnectContent, ScraperLog, Content
-from ..utils import parse_age
+from ..utils import parse_age, download_image_to_field
 
 
 logger = logging.getLogger("yangitv_parser")
@@ -305,7 +305,6 @@ def parse_yt_connect(self, content_id):
             content_original.name_uz = data.get("name") or ""
             content_original.description_uz = data.get("description") or ""
             content_original.id_uz = content_id
-            content_original.poster_uz = data.get("poster") or None
             if content_original.age_restriction is None:
                 content_original.age_restriction = parse_age(data.get("age"))
             content_original.save(
@@ -313,10 +312,19 @@ def parse_yt_connect(self, content_id):
                     "name_uz",
                     "description_uz",
                     "id_uz",
-                    "poster_uz",
                     "age_restriction",
                 ]
             )
+
+            # Постер качаем и сохраняем в MinIO через FieldFile.save —
+            # это вызовет content_original.save() автоматически.
+            poster_url = data.get("poster")
+            if poster_url and not content_original.poster_uz:
+                download_image_to_field(
+                    content_original.poster_uz,
+                    poster_url,
+                    name_base=f"yt_{content_id}",
+                )
 
         YtConnectContent.objects.filter(content_id=content_id).update(
             parsing_status="parsed"

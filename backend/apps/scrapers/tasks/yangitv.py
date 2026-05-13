@@ -20,6 +20,7 @@
 """
 import base64
 import logging
+import re
 import time
 from datetime import timedelta
 
@@ -124,37 +125,133 @@ def _manual_unpad(data: bytes) -> bytes:
     return data[:-padding_len]
 
 
-def _decrypt_movie_urls(api_data: dict) -> dict:
+def _decrypt_chunks(parts) -> str | None:
     """
-    Расшифровывает URL'ы из ответа yangi.tv API getMovieUrl.
-    Каждое качество — список base64-зашифрованных кусков.
-    Каждый кусок шифруется AES-CBC отдельно с PKCS7-паддингом.
-    Снимаем паддинг с КАЖДОГО куска, потом склеиваем.
+    Дешифрует массив base64-зашифрованных кусков AES-CBC.
+    Каждый кусок имеет свой PKCS7-паддинг (снимаем до склейки).
+    Возвращает строку URL или None.
     """
+    if not isinstance(parts, list) or not parts:
+        return None
+    decrypted_parts = []
+    for part in parts:
+        encrypted_chunk = base64.b64decode(part)
+        cipher = Cipher(algorithms.AES(YT_AES_KEY), modes.CBC(YT_AES_IV))
+        decryptor = cipher.decryptor()
+        chunk = decryptor.update(encrypted_chunk) + decryptor.finalize()
+        chunk = _manual_unpad(chunk)
+        decrypted_parts.append(chunk)
+    full = b"".join(decrypted_parts)
+    url = full.decode("utf-8", errors="ignore").strip()
+    return url or None
+
+
+def _parse_episode_name(name: str):
+    """
+    Из 'N-qism Mp' → (episode_number, quality_str).
+    Примеры: '8-qism 1080p' → (8, '1080p'); '7-qism 720p' → (7, '720p').
+    """
+    if not name:
+        return None, None
+    ep_match = re.search(r"(\d+)\s*-\s*qism", name, re.IGNORECASE)
+    q_match = re.search(r"(\d+)\s*p", name, re.IGNORECASE)
+    ep = int(ep_match.group(1)) if ep_match else None
+    quality = f"{q_match.group(1)}p" if q_match else None
+    return ep, quality
+
+
+def _parse_season_name(name: str):
+    """Из 'N-fasl' извлекает номер сезона."""
+    if not name:
+        return None
+    match = re.search(r"(\d+)\s*-\s*fasl", name, re.IGNORECASE)
+    return int(match.group(1)) if match else None
+
+
+def _decrypt_film_urls(api_data) -> dict:
+    """
+    Фильм: api_data = {'480A': [chunks], '720A': [chunks], '1080A': [chunks], ...}.
+    Возвращает {'480p': 'url', '720p': 'url', '1080p': 'url'}.
+    """
+    if not isinstance(api_data, dict):
+        return {}
     result = {}
-    for quality, encrypted_parts in (api_data or {}).items():
-        if not isinstance(encrypted_parts, list) or not encrypted_parts:
-            continue
+    for quality, encrypted_parts in api_data.items():
         try:
-            decrypted_parts = []
-            for part in encrypted_parts:
-                encrypted_chunk = base64.b64decode(part)
-                cipher = Cipher(algorithms.AES(YT_AES_KEY), modes.CBC(YT_AES_IV))
-                decryptor = cipher.decryptor()
-                chunk = decryptor.update(encrypted_chunk) + decryptor.finalize()
-                # PKCS7-паддинг на КАЖДОМ куске — снимаем сразу,
-                # иначе \x10-байты попадут в склейку между кусками.
-                chunk = _manual_unpad(chunk)
-                decrypted_parts.append(chunk)
-            full = b"".join(decrypted_parts)
-            url = full.decode("utf-8", errors="ignore").strip()
+            url = _decrypt_chunks(encrypted_parts)
             if url:
-                quality_name = quality.replace("A", "p")
-                result[quality_name] = url
+                result[quality.replace("A", "p")] = url
         except Exception as e:
             logger.warning(f"[yt-decrypt] {quality}: {type(e).__name__}: {e}")
-            continue
     return result
+
+
+def _decrypt_serial_urls(api_data) -> dict:
+    """
+    Сериал: api_data = [
+        {'id': ..., 'name': '1-fasl', 'series': [
+            {'id': ..., 'name': '1-qism 1080p', 'fileA': [chunks]},
+            {'id': ..., 'name': '1-qism 720p', 'fileA': [chunks]},
+            ...
+        ]},
+        ...
+    ]
+    Возвращает {
+        '1': {  # сезон
+            '1': {  # эпизод
+                '1080p': 'url',
+                '720p': 'url',
+                ...
+            },
+            ...
+        },
+        ...
+    }
+    """
+    if not isinstance(api_data, list):
+        return {}
+    result = {}
+    for season_obj in api_data:
+        if not isinstance(season_obj, dict):
+            continue
+        season_num = _parse_season_name(season_obj.get("name", ""))
+        if season_num is None:
+            continue
+        season_key = str(season_num)
+        for episode_obj in season_obj.get("series", []) or []:
+            if not isinstance(episode_obj, dict):
+                continue
+            ep_num, quality = _parse_episode_name(episode_obj.get("name", ""))
+            if ep_num is None or quality is None:
+                continue
+            try:
+                url = _decrypt_chunks(episode_obj.get("fileA"))
+                if not url:
+                    continue
+                ep_key = str(ep_num)
+                result.setdefault(season_key, {}).setdefault(ep_key, {})[quality] = url
+            except Exception as e:
+                logger.warning(
+                    f"[yt-decrypt-serial] s{season_num}e{ep_num} {quality}: "
+                    f"{type(e).__name__}: {e}"
+                )
+    return result
+
+
+def _decrypt_movie_urls(api_data) -> dict:
+    """
+    Универсальная точка входа. Определяет — фильм (dict) или сериал (list)
+    — и возвращает соответствующую структуру.
+
+    Для фильма:  {'480p': 'url', '720p': 'url', ...}
+    Для сериала: {'1': {'1': {'480p': 'url', ...}, ...}, ...}
+    Сам сериал-формат можно отличить по наличию вложенных dict'ов.
+    """
+    if isinstance(api_data, list):
+        return _decrypt_serial_urls(api_data)
+    if isinstance(api_data, dict):
+        return _decrypt_film_urls(api_data)
+    return {}
 
 
 # ============================================================
@@ -329,6 +426,11 @@ def parse_yt_connect(self, content_id):
         YtConnectContent.objects.filter(content_id=content_id).update(
             parsing_status="parsed"
         )
+        ScraperLog.objects.create(
+            task_name=task_name,
+            status="success",
+            message=f"matched: {bool(content_original)}",
+        )
         return f"ok {content_id} (matched: {bool(content_original)})"
 
     except Exception as exc:
@@ -407,25 +509,47 @@ def parse_yt_movie_url(self, content_id):
             )
             return f"api error {content_id}"
 
-        urls = _decrypt_movie_urls(api_response.get("data", {}))
+        data = api_response.get("data", {})
+        urls = _decrypt_movie_urls(data)
         if not urls:
             _record_yt_failure(content_id, "player", "no urls decoded")
             return f"no urls {content_id}"
+
+        is_serial = isinstance(data, list)
 
         # Сохраняем в YtConnectContent (локальная техническая БД)
         YtConnectContent.objects.filter(content_id=content_id).update(
             content_url=urls,
             parsing_status_player="parsed",
+            is_serial=is_serial,
         )
 
-        # Копируем в Content.film_content_uz, если связь установлена.
-        Content.objects.filter(id_uz=content_id).update(film_content_uz=urls)
+        # Копируем в Content. Для сериала ещё last_season_uz / last_episode_uz.
+        content_update = {"film_content_uz": urls}
+        if is_serial and urls:
+            try:
+                seasons = sorted(urls.keys(), key=int)
+                last_s = int(seasons[-1])
+                content_update["last_season_uz"] = last_s
+                ep_keys = list((urls.get(str(last_s)) or {}).keys())
+                if ep_keys:
+                    last_ep = max(int(e) for e in ep_keys)
+                    content_update["last_episode_uz"] = last_ep
+            except (ValueError, TypeError):
+                pass
 
-        logger.info(f"✅ {content_id} | качества: {list(urls.keys())}")
+        Content.objects.filter(id_uz=content_id).update(**content_update)
+
+        summary = (
+            f"серий: {sum(len(v) for v in urls.values())}, сезонов: {len(urls)}"
+            if is_serial
+            else f"качества: {list(urls.keys())}"
+        )
+        logger.info(f"✅ {content_id} | {'сериал' if is_serial else 'фильм'} | {summary}")
         ScraperLog.objects.create(
             task_name=task_name,
             status="success",
-            message=f"качества: {list(urls.keys())}",
+            message=summary,
         )
         return f"ok {content_id}"
 

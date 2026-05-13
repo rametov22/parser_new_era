@@ -8,11 +8,55 @@ from regex import P
 # Register your models here.
 
 
+class LinkedToContentFilter(admin.SimpleListFilter):
+    """Фильтр: связан ли YtConnectContent с Content (через id_uz)."""
+
+    title = _("связь с Content")
+    parameter_name = "linked"
+
+    def lookups(self, request, model_admin):
+        return [
+            ("linked", _("связано (Content.id_uz есть)")),
+            ("orphan_parsed", _("parsed но НЕ связано")),
+            ("orphan_any", _("любой статус — НЕ связано")),
+        ]
+
+    def queryset(self, request, queryset):
+        linked_ids = set(
+            models.Content.objects.filter(id_uz__isnull=False).values_list(
+                "id_uz", flat=True
+            )
+        )
+        if self.value() == "linked":
+            return queryset.filter(content_id__in=linked_ids)
+        if self.value() == "orphan_parsed":
+            return queryset.filter(parsing_status="parsed").exclude(
+                content_id__in=linked_ids
+            )
+        if self.value() == "orphan_any":
+            return queryset.exclude(content_id__in=linked_ids)
+        return queryset
+
+
 @admin.register(models.YtConnectContent)
 class YtConnectContentAdmin(admin.ModelAdmin):
-    list_display = ("content_id", "parsing_status", "updated_at")
-    list_filter = ("parsing_status",)
+    list_display = (
+        "content_id",
+        "parsing_status",
+        "parsing_status_player",
+        "is_serial",
+        "connect_fail_count",
+        "player_fail_count",
+        "updated_at",
+    )
+    list_filter = (
+        "parsing_status",
+        "parsing_status_player",
+        "is_serial",
+        LinkedToContentFilter,
+    )
     search_fields = ("content_id",)
+    readonly_fields = ("created_at", "updated_at")
 
 
 @admin.register(models.ScraperLog)

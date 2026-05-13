@@ -29,6 +29,7 @@ from celery import shared_task
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from decouple import config
 from django.db.models import F
+from django.db.models.functions import Lower, Trim
 from django.utils import timezone
 
 from ..models import YtConnectContent, ScraperLog, Content
@@ -392,11 +393,18 @@ def parse_yt_connect(self, content_id):
         name_ru = data.get("name_ru")
         year = data.get("year")
 
-        content_original = (
-            Content.objects.filter(name_ru=name_ru, year_production=year).first()
-            if name_ru and year
-            else None
-        )
+        # Нормализуем имя: trim + lower на стороне БД (Content.name_ru иногда
+        # содержит trailing space из KP-парсера → exact-match не срабатывает).
+        content_original = None
+        if name_ru and year:
+            yt_name_norm = name_ru.strip().lower()
+            content_original = (
+                Content.objects.annotate(
+                    _name_norm=Lower(Trim("name_ru"))
+                )
+                .filter(_name_norm=yt_name_norm, year_production=year)
+                .first()
+            )
 
         if content_original:
             content_original.name_uz = data.get("name") or ""

@@ -17,7 +17,8 @@ class LinkedToContentFilter(admin.SimpleListFilter):
     def lookups(self, request, model_admin):
         return [
             ("linked", _("связано (Content.id_uz есть)")),
-            ("orphan_parsed", _("parsed но НЕ связано")),
+            ("orphan_parsed", _("connect parsed но НЕ связано")),
+            ("orphan_with_urls", _("URL есть но НЕ связано (player parsed)")),
             ("orphan_any", _("любой статус — НЕ связано")),
         ]
 
@@ -31,6 +32,10 @@ class LinkedToContentFilter(admin.SimpleListFilter):
             return queryset.filter(content_id__in=linked_ids)
         if self.value() == "orphan_parsed":
             return queryset.filter(parsing_status="parsed").exclude(
+                content_id__in=linked_ids
+            )
+        if self.value() == "orphan_with_urls":
+            return queryset.filter(parsing_status_player="parsed").exclude(
                 content_id__in=linked_ids
             )
         if self.value() == "orphan_any":

@@ -431,6 +431,38 @@ def parse_yt_connect(self, content_id):
                     name_base=f"yt_{content_id}",
                 )
 
+            # Если у этого content_id уже есть готовые URL'ы (фаза 3 отработала
+            # ДО того как мы нашли матч) — копируем их в film_content_uz сейчас.
+            existing_yt = (
+                YtConnectContent.objects.filter(content_id=content_id)
+                .only("content_url", "is_serial")
+                .first()
+            )
+            if (
+                existing_yt
+                and existing_yt.content_url
+                and existing_yt.content_url != {}
+                and (
+                    not content_original.film_content_uz
+                    or content_original.film_content_uz == {}
+                )
+            ):
+                extra = {"film_content_uz": existing_yt.content_url}
+                if existing_yt.is_serial and isinstance(existing_yt.content_url, dict):
+                    try:
+                        seasons = sorted(existing_yt.content_url.keys(), key=int)
+                        if seasons:
+                            last_s = int(seasons[-1])
+                            extra["last_season_uz"] = last_s
+                            ep_keys = list(
+                                (existing_yt.content_url.get(str(last_s)) or {}).keys()
+                            )
+                            if ep_keys:
+                                extra["last_episode_uz"] = max(int(e) for e in ep_keys)
+                    except (ValueError, TypeError):
+                        pass
+                Content.objects.filter(pk=content_original.pk).update(**extra)
+
         YtConnectContent.objects.filter(content_id=content_id).update(
             parsing_status="parsed"
         )

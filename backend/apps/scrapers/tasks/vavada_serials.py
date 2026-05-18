@@ -18,6 +18,7 @@ parse_single_iframe прошёл), периодически обновлять:
   - is_parsed_ru="parsed" (не пересекается с активным parse_single_iframe)
 """
 import re
+import time
 import logging
 from datetime import timedelta
 
@@ -35,6 +36,15 @@ from .vavada import create_driver, get_chrome_count
 
 logger = logging.getLogger("vavada_serials")
 logger.setLevel(logging.INFO)
+# Добавляем handler чтобы messages выводились в stdout (для логов celery
+# воркера и для синхронного вызова через .run() из shell).
+if not logger.handlers:
+    _h = logging.StreamHandler()
+    _h.setFormatter(
+        logging.Formatter("%(asctime)s | %(levelname)s | %(message)s", "%H:%M:%S")
+    )
+    logger.addHandler(_h)
+    logger.propagate = False
 
 
 VAVADA_SERIALS_QUEUE_NAME = "vavada_serials_queue"
@@ -142,7 +152,65 @@ def parse_vavada_serial(self, kp_id):
             logger.warning(f"[serial] {kp_id} | плеер не найден")
             return f"No player for {kp_id}"
 
+        # Внутри playerFrame от obrut.show есть стаб + nested iframe #visual.
+        # Реальный плеер может быть либо в playerFrame, либо в #visual.
+        # Ждём именно появления pjsdiv-элементов в одном из фреймов —
+        # длина page_source ненадёжна (PlayerJS-скрипт грузится раньше,
+        # чем рисует UI).
         driver.switch_to.frame(0)
+        player_loaded = False
+        in_visual = False
+        deadline = time.time() + 60
+        last_log = 0
+        while time.time() < deadline:
+            # Проверяем playerFrame
+            try:
+                pjs_top = len(driver.find_elements(By.CSS_SELECTOR, "pjsdiv"))
+            except Exception:
+                pjs_top = 0
+
+            if pjs_top > 0:
+                player_loaded = True
+                in_visual = False
+                break
+
+            # Заходим в #visual
+            pjs_vis = 0
+            try:
+                visual = driver.find_element(By.ID, "visual")
+                driver.switch_to.frame(visual)
+                in_visual = True
+                pjs_vis = len(driver.find_elements(By.CSS_SELECTOR, "pjsdiv"))
+                if pjs_vis > 0:
+                    player_loaded = True
+                    break
+                # Не нашли — выходим обратно в playerFrame
+                driver.switch_to.parent_frame()
+                in_visual = False
+            except Exception:
+                pass
+
+            if time.time() - last_log > 10:
+                logger.info(
+                    f"[serial-debug] {kp_id} | waiting player: "
+                    f"pjs_top={pjs_top} pjs_visual={pjs_vis}"
+                )
+                last_log = time.time()
+            time.sleep(1)
+
+        if not player_loaded:
+            logger.warning(
+                f"[serial] {kp_id} | плеер не появился за 60 сек "
+                f"(in_visual={in_visual})"
+            )
+            return f"No player UI for {kp_id}"
+
+        logger.info(
+            f"[serial-debug] {kp_id} | плеер найден в "
+            f"{'visual iframe' if in_visual else 'playerFrame'}"
+        )
+        # Даём плееру дорисовать списки (sea/sez/eps)
+        time.sleep(3)
         soup = BeautifulSoup(driver.page_source, "lxml")
 
         filtered_audio_tracks = []
@@ -150,6 +218,10 @@ def parse_vavada_serial(self, kp_id):
         last_episode = None
 
         track_div = soup.find("div", id="player")
+        logger.info(
+            f"[serial-debug] {kp_id} | page_source len={len(driver.page_source)} | "
+            f"track_div={track_div is not None}"
+        )
         if track_div:
             # Аудиодорожки
             playlist = track_div.find("pjsdiv", id="player_playlist1")
@@ -162,41 +234,107 @@ def parse_vavada_serial(self, kp_id):
                         if text:
                             filtered_audio_tracks.append(text)
 
-            # Эпизоды (последний номер)
-            episode_wrapper = track_div.find("pjsdiv", id="player_playlist2")
-            if episode_wrapper:
-                episode_scroll = episode_wrapper.find(
-                    "pjsdiv", class_="pjsplplayerscroll"
-                )
-                if episode_scroll:
-                    episode_items = episode_scroll.find_all("pjsdiv")
-                    episode_numbers = []
-                    for item in episode_items:
-                        text = item.get_text(strip=True)
-                        if text:
-                            match = re.search(r"(\d+)", text)
-                            if match:
-                                episode_numbers.append(int(match.group(1)))
-                    if episode_numbers:
-                        last_episode = str(max(episode_numbers))
+        # Хелперы через JS — единственный надёжный способ читать содержимое
+        # выпадающих списков плеера (background pjsdiv путаются с реальными).
+        def _read_items(playlist_id):
+            """Возвращает список текстов реальных пунктов в указанном playlist."""
+            try:
+                return driver.execute_script(
+                    """
+                    const wrap = document.querySelector('#' + arguments[0] + ' .pjsplplayerscroll');
+                    if (!wrap) return [];
+                    return Array.from(wrap.children)
+                        .filter(el => el.hasAttribute('me'))
+                        .map(el => (el.innerText || el.textContent || '').trim());
+                    """,
+                    playlist_id,
+                ) or []
+            except Exception as e:
+                logger.warning(f"[serial] {kp_id} | _read_items({playlist_id}): {e}")
+                return []
 
-            # Сезоны (последний номер)
-            season_wrapper = track_div.find("pjsdiv", id="player_playlist3")
-            if season_wrapper:
-                season_scroll = season_wrapper.find(
-                    "pjsdiv", class_="pjsplplayerscroll"
+        def _click_item(playlist_id, idx):
+            """Клик по элементу в playlist через имитацию mouse events."""
+            try:
+                return driver.execute_script(
+                    """
+                    const wrap = document.querySelector('#' + arguments[0] + ' .pjsplplayerscroll');
+                    if (!wrap) return null;
+                    const items = Array.from(wrap.children).filter(el => el.hasAttribute('me'));
+                    const idx = arguments[1];
+                    if (items.length <= idx) return null;
+                    const el = items[idx];
+                    ['mousedown', 'mouseup', 'click'].forEach(evt => {
+                        el.dispatchEvent(new MouseEvent(evt, {bubbles: true, cancelable: true, view: window}));
+                    });
+                    return (el.innerText || el.textContent || '').trim();
+                    """,
+                    playlist_id,
+                    idx,
                 )
-                if season_scroll:
-                    season_items = season_scroll.find_all("pjsdiv")
-                    season_numbers = []
-                    for item in season_items:
-                        text = item.get_text(strip=True)
-                        if text:
-                            match = re.search(r"(\d+)", text)
-                            if match:
-                                season_numbers.append(int(match.group(1)))
-                    if season_numbers:
-                        last_season = str(max(season_numbers))
+            except Exception as e:
+                logger.warning(f"[serial] {kp_id} | _click({playlist_id}, {idx}): {e}")
+                return None
+
+        def _max_number(items):
+            """Возвращает (idx_первого_с_max, max_number) или (None, None)."""
+            nums = []
+            for idx, text in enumerate(items):
+                if text:
+                    m = re.search(r"(\d+)", text)
+                    if m:
+                        nums.append((idx, int(m.group(1))))
+            if not nums:
+                return None, None
+            return max(nums, key=lambda x: x[1])
+
+        # Аудиодорожки — читаем для сохранения в БД
+        audio_items_text = _read_items("player_playlist1")
+        filtered_audio_tracks = [t for t in audio_items_text if t]
+        logger.info(
+            f"[serial-debug] {kp_id} | audio tracks: {len(filtered_audio_tracks)}"
+        )
+
+        # Сезоны — читаем
+        season_items = _read_items("player_playlist3")
+        season_idx, max_season = _max_number(season_items)
+        if max_season is not None:
+            last_season = str(max_season)
+        logger.info(
+            f"[serial-debug] {kp_id} | seasons: {season_items} | "
+            f"last_season={last_season}"
+        )
+
+        # Кликаем по последнему сезону. После клика, пока аудио ещё не
+        # выбрано, эпизоды появляются в player_playlist1 (на месте аудио,
+        # с заголовком "..."). Когда аудио уже выбрано — в player_playlist2.
+        if season_idx is not None and season_idx > 0:
+            clicked = _click_item("player_playlist3", season_idx)
+            logger.info(f"[serial-debug] {kp_id} | clicked season: {clicked!r}")
+            time.sleep(4)  # подольше — даём плееру догрузить эпизоды
+
+        # Читаем эпизоды из обоих плейлистов — в зависимости от того,
+        # выбрано ли аудио после клика по сезону, эпизоды могут оказаться
+        # в player_playlist1 (с заголовком "...") или player_playlist2.
+        # Отфильтровываем элементы с "сезон" — это не эпизоды, а список
+        # сезонов, который может оказаться в любом из этих слотов.
+        def _only_episodes(items):
+            return [t for t in items if t and "сезон" not in t.lower()]
+
+        ep_items_1 = _only_episodes(_read_items("player_playlist1"))
+        ep_items_2 = _only_episodes(_read_items("player_playlist2"))
+        _, max_ep_1 = _max_number(ep_items_1)
+        _, max_ep_2 = _max_number(ep_items_2)
+        max_ep = max(
+            (n for n in (max_ep_1, max_ep_2) if n is not None),
+            default=None,
+        )
+        if max_ep is not None:
+            last_episode = str(max_ep)
+        logger.info(
+            f"[serial-debug] {kp_id} | episodes pl1={ep_items_1} pl2={ep_items_2} | "
+            f"last_episode={last_episode}"
+        )
 
         film.audio_tracks = filtered_audio_tracks
         film.last_season = last_season

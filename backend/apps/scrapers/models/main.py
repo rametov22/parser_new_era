@@ -11,6 +11,12 @@ class ScraperLog(models.Model):
 
 
 class YtConnectContent(models.Model):
+    """
+    Состояние парсинга yangi.tv. Живёт в main_db (см. router),
+    чтобы не зависеть от локального парсер-хоста.
+    Таблица создаётся в Kmax-проекте (managed=False здесь).
+    """
+
     PARSING_STATUS_CHOICES = [
         ("not_parsed", "Not parsed"),
         ("in_progress", "In Progress"),
@@ -32,3 +38,7 @@ class YtConnectContent(models.Model):
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = "parser_yt_connect_content"

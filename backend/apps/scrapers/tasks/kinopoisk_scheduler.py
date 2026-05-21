@@ -205,17 +205,26 @@ def refill_task(self):
         print(f"[refill] Очередь {QUEUE_NAME}: {length} задач, порог {QUEUE_THRESHOLD} — пропуск")
         return 0
 
-    # Приоритет:
-    #   1) parsed_at_kp IS NULL (никогда не парсенные) — все легаси и новые;
-    #      внутри них новые (с высоким id) первыми.
-    #   2) parsed_at_kp ASC — на перепарсинг идут самые давно спаршенные.
-    # Так гарантируется, что легаси-фильмы со старыми id всё равно будут
-    # спаршены, прежде чем кто-то пойдёт на повторный круг через 5 дней.
+    # Приоритет (важно: parse_count_kp ПЕРВЫЙ ключ):
+    #   1) parse_count_kp ASC — никогда успешно не спаршенные (0) идут первыми,
+    #      потом 1-цикловые, и т.д.
+    #      Это важно: refill ставит parsed_at_kp=now() при выдаче, но
+    #      parse_count_kp инкрементится только при УСПЕХЕ. Поэтому
+    #      "никогда успешно не спаршенный" определяется именно через
+    #      parse_count_kp, а не через parsed_at_kp IS NULL (которое
+    #      обманывается прошлыми неудачными попытками).
+    #   2) parsed_at_kp ASC NULLS FIRST — среди одного и того же кол-ва
+    #      циклов: сначала true-NULL (никогда не трогали), потом давние.
+    #   3) -id — стабильный tiebreak (новые с высоким id первыми).
     from django.db.models import F
 
     kp_ids = list(
         models.Content.objects.filter(is_parsed_kp="not_parsed")
-        .order_by(F("parsed_at_kp").asc(nulls_first=True), "-id")
+        .order_by(
+            "parse_count_kp",
+            F("parsed_at_kp").asc(nulls_first=True),
+            "-id",
+        )
         .values_list("kino_poisk_id", flat=True)[:REFILL_BATCH]
     )
 

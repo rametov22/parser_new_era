@@ -90,21 +90,21 @@ def _record_yt_failure(content_id, phase, message):
         status_field = "parsing_status_player"
 
     YtConnectContent.objects.filter(content_id=content_id).update(
-        **{count_field: F(count_field) + 1}
+        **{count_field: F(count_field) + 1}, updated_at=timezone.now()
     )
     rec = YtConnectContent.objects.filter(content_id=content_id).only(count_field).first()
     fail_count = getattr(rec, count_field, 0) if rec else 0
 
     if fail_count >= MAX_FAIL_ATTEMPTS:
         YtConnectContent.objects.filter(content_id=content_id).update(
-            **{status_field: "failed"}
+            **{status_field: "failed"}, updated_at=timezone.now()
         )
         logger.error(
             f"☠️ {phase}: {content_id} помечен failed после {fail_count} попыток"
         )
     else:
         YtConnectContent.objects.filter(content_id=content_id).update(
-            **{status_field: "not_parsed"}
+            **{status_field: "not_parsed"}, updated_at=timezone.now()
         )
 
     ScraperLog.objects.create(
@@ -178,6 +178,105 @@ def _parse_season_name(name: str):
         return None
     match = re.search(r"(\d+)\s*-\s*fasl", name, re.IGNORECASE)
     return int(match.group(1)) if match else None
+
+
+def _normalize_name(s: str) -> str:
+    """
+    Жёсткая нормализация: lower, ё→е, выкидываем все знаки препинания
+    (кавычки «»""'', запятые, двоеточия, тире и т.д.), сжимаем пробелы.
+
+    'Загадай «свою» смерть' → 'загадай свою смерть'
+    '«Монарх»: Наследие монстров' → 'монарх наследие монстров'
+    """
+    if not s:
+        return ""
+    s = s.replace("ё", "е").replace("Ё", "Е")
+    s = re.sub(r"[^\w\s]", " ", s, flags=re.UNICODE)
+    s = re.sub(r"\s+", " ", s)
+    return s.strip().lower()
+
+
+def _normalize_name_soft(s: str) -> str:
+    """
+    Та же нормализация + дополнительно удаляем содержимое скобок (...) и
+    всё после первого ':' / '.' / '—' (часто это субтитр который у
+    yangi.tv есть, а у kinopoisk нет).
+
+    'Загадай свою смерть (Если бы желания могли убивать)' → 'загадай свою смерть'
+    'Операция «Панда». Дикая миссия' → 'операция панда'
+    """
+    if not s:
+        return ""
+    # Убираем содержимое скобок
+    s = re.sub(r"\([^)]*\)", "", s)
+    s = re.sub(r"\[[^\]]*\]", "", s)
+    # Режем хвост после первого разделителя сабтайтла
+    s = re.split(r"[:.—–]", s, maxsplit=1)[0]
+    return _normalize_name(s)
+
+
+def _match_content(yt_name: str, yt_year, content_id: int):
+    """
+    Многоступенчатый матч YtConnectContent → Content.
+
+    Возвращает (content, strategy) либо (None, reason_str).
+    Стратегии (по убыванию строгости):
+      1. exact_norm_year   — нормализованное имя + год
+      2. exact_norm        — нормализованное имя без года (если в yt нет year)
+      3. soft_norm_year    — мягкая нормализация (выкинуть скобки/сабтайтл) + год
+    Если на любом шаге найдено >1 совпадение — НЕ привязываем (ambiguous).
+    """
+    if not yt_name:
+        return None, "no_yt_name"
+
+    yt_strict = _normalize_name(yt_name)
+    yt_soft = _normalize_name_soft(yt_name)
+
+    # Строим набор кандидатов через Python (Content в main_db, JOIN не делаем).
+    # Сужаем по году чтобы не тянуть всю базу.
+    qs = Content.objects.only("id", "name_ru", "year_production")
+    if yt_year:
+        qs = qs.filter(year_production=yt_year)
+    candidates = list(qs)
+    if not candidates:
+        return None, "no_kp_in_year"
+
+    # Стратегия 1: exact normalized + year
+    exact_year = [
+        c for c in candidates
+        if _normalize_name(c.name_ru) == yt_strict
+    ]
+    if len(exact_year) == 1:
+        return exact_year[0], "exact_norm_year"
+    if len(exact_year) > 1:
+        return None, f"ambiguous_exact_{len(exact_year)}"
+
+    # Стратегия 2: exact normalized (без года, если в yt нет года)
+    if not yt_year:
+        all_qs = list(
+            Content.objects.only("id", "name_ru", "year_production")
+        )
+        exact_any = [
+            c for c in all_qs
+            if _normalize_name(c.name_ru) == yt_strict
+        ]
+        if len(exact_any) == 1:
+            return exact_any[0], "exact_norm_noyear"
+        if len(exact_any) > 1:
+            return None, f"ambiguous_exact_noyear_{len(exact_any)}"
+
+    # Стратегия 3: soft normalize (выкинуть скобки/сабтайтл) + year
+    if yt_year and yt_soft:
+        soft_matches = [
+            c for c in candidates
+            if _normalize_name_soft(c.name_ru) == yt_soft
+        ]
+        if len(soft_matches) == 1:
+            return soft_matches[0], "soft_norm_year"
+        if len(soft_matches) > 1:
+            return None, f"ambiguous_soft_{len(soft_matches)}"
+
+    return None, "no_match"
 
 
 def _decrypt_film_urls(api_data) -> dict:
@@ -346,7 +445,7 @@ def spawn_yt_connect():
         return 0
 
     YtConnectContent.objects.filter(content_id__in=candidates).update(
-        parsing_status="in_progress"
+        parsing_status="in_progress", updated_at=timezone.now()
     )
 
     for content_id in candidates:
@@ -385,7 +484,7 @@ def parse_yt_connect(self, content_id):
     )
     if already_linked:
         YtConnectContent.objects.filter(content_id=content_id).update(
-            parsing_status="parsed"
+            parsing_status="parsed", updated_at=timezone.now()
         )
         return f"already linked {content_id}"
 
@@ -408,18 +507,11 @@ def parse_yt_connect(self, content_id):
         name_ru = data.get("name_ru")
         year = data.get("year")
 
-        # Нормализуем имя: trim + lower на стороне БД (Content.name_ru иногда
-        # содержит trailing space из KP-парсера → exact-match не срабатывает).
-        content_original = None
-        if name_ru and year:
-            yt_name_norm = name_ru.strip().lower()
-            content_original = (
-                Content.objects.annotate(
-                    _name_norm=Lower(Trim("name_ru"))
-                )
-                .filter(_name_norm=yt_name_norm, year_production=year)
-                .first()
-            )
+        content_original, strategy = _match_content(name_ru, year, content_id)
+        logger.info(
+            f"[yt-match] {content_id} | yt={name_ru!r}/{year} → "
+            f"{strategy} → {f'kp_id={content_original.kino_poisk_id}' if content_original else 'NONE'}"
+        )
 
         if content_original:
             content_original.name_uz = data.get("name") or ""
@@ -479,7 +571,7 @@ def parse_yt_connect(self, content_id):
                 Content.objects.filter(pk=content_original.pk).update(**extra)
 
         YtConnectContent.objects.filter(content_id=content_id).update(
-            parsing_status="parsed"
+            parsing_status="parsed", updated_at=timezone.now()
         )
         ScraperLog.objects.create(
             task_name=task_name,
@@ -519,7 +611,7 @@ def spawn_yt_movie_urls():
         return 0
 
     YtConnectContent.objects.filter(content_id__in=candidates).update(
-        parsing_status_player="in_progress"
+        parsing_status_player="in_progress", updated_at=timezone.now()
     )
 
     for content_id in candidates:
@@ -572,11 +664,12 @@ def parse_yt_movie_url(self, content_id):
 
         is_serial = isinstance(data, list)
 
-        # Сохраняем в YtConnectContent (локальная техническая БД)
+        # Сохраняем в YtConnectContent (в main_db через router)
         YtConnectContent.objects.filter(content_id=content_id).update(
             content_url=urls,
             parsing_status_player="parsed",
             is_serial=is_serial,
+            updated_at=timezone.now(),
         )
 
         # Копируем в Content. Для сериала ещё last_season_uz / last_episode_uz.
@@ -633,12 +726,12 @@ def expire_yt_stuck():
     stuck_connect = YtConnectContent.objects.filter(
         parsing_status="in_progress",
         updated_at__lt=threshold,
-    ).update(parsing_status="not_parsed")
+    ).update(parsing_status="not_parsed", updated_at=timezone.now())
 
     stuck_player = YtConnectContent.objects.filter(
         parsing_status_player="in_progress",
         updated_at__lt=threshold,
-    ).update(parsing_status_player="not_parsed")
+    ).update(parsing_status_player="not_parsed", updated_at=timezone.now())
 
     logger.info(
         f"[yt-expire] стак-connect: {stuck_connect}, стак-player: {stuck_player}"
@@ -660,7 +753,7 @@ def connect_yt_content():
     if not candidate:
         return "no candidates"
     YtConnectContent.objects.filter(pk=candidate.pk).update(
-        parsing_status="in_progress"
+        parsing_status="in_progress", updated_at=timezone.now()
     )
     return parse_yt_connect.run(candidate.content_id)
 
@@ -678,6 +771,6 @@ def get_movie_url():
     if not candidate:
         return "no candidates"
     YtConnectContent.objects.filter(pk=candidate.pk).update(
-        parsing_status_player="in_progress"
+        parsing_status_player="in_progress", updated_at=timezone.now()
     )
     return parse_yt_movie_url.run(candidate.content_id)

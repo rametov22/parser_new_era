@@ -205,23 +205,23 @@ def refill_task(self):
         print(f"[refill] Очередь {QUEUE_NAME}: {length} задач, порог {QUEUE_THRESHOLD} — пропуск")
         return 0
 
-    # Приоритет (важно: parse_count_kp ПЕРВЫЙ ключ):
-    #   1) parse_count_kp ASC — никогда успешно не спаршенные (0) идут первыми,
-    #      потом 1-цикловые, и т.д.
-    #      Это важно: refill ставит parsed_at_kp=now() при выдаче, но
-    #      parse_count_kp инкрементится только при УСПЕХЕ. Поэтому
-    #      "никогда успешно не спаршенный" определяется именно через
-    #      parse_count_kp, а не через parsed_at_kp IS NULL (которое
-    #      обманывается прошлыми неудачными попытками).
-    #   2) parsed_at_kp ASC NULLS FIRST — среди одного и того же кол-ва
-    #      циклов: сначала true-NULL (никогда не трогали), потом давние.
-    #   3) -id — стабильный tiebreak (новые с высоким id первыми).
+    # Приоритет:
+    #   1) parse_count_kp ASC — никогда успешно не спаршенные (0) первыми,
+    #      потом 1-цикловые, и т.д. Не зависит от прошлых неудачных попыток
+    #      (refill ставит parsed_at_kp на выдаче, но parse_count_kp
+    #      инкрементится только при успехе).
+    #   2) -year_production NULLS LAST — внутри одного кол-ва циклов: сначала
+    #      свежие года (2026, 2025), потом старые. На перепарсе это даёт
+    #      современным фильмам ходить первыми.
+    #   3) parsed_at_kp ASC NULLS FIRST — true-NULL первыми, потом давние.
+    #   4) -id — стабильный tiebreak.
     from django.db.models import F
 
     kp_ids = list(
         models.Content.objects.filter(is_parsed_kp="not_parsed")
         .order_by(
             "parse_count_kp",
+            F("year_production").desc(nulls_last=True),
             F("parsed_at_kp").asc(nulls_first=True),
             "-id",
         )

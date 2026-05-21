@@ -1,25 +1,24 @@
 """
-Ищет YtConnectContent с устаревшим форматом URL и (опционально) сбрасывает
-их статус для перепарсинга.
+Ищет stale URL в:
+  1. YtConnectContent.content_url
+  2. Content.film_content_uz  (туда копируется из YtConnectContent)
 
-Старый формат (надо перепарсить):
-  - https://cdn-1.yangi.tv/Kinolar/...
-  - https://yangi.tv/generator.php?link=...
+Старый формат:
+  - cdn-N.yangi.tv/...
+  - yangi.tv/generator.php?link=...
 
-Новый формат (корректный):
-  - https://sN.yangi.tv/kinolar/MM.YYYY/ID/...
+Запуск dry-run:
+    docker compose exec -T backend python manage.py shell \\
+      < backend/scripts/find_stale_yt_urls.py
 
-Запуск:
-    # просто посмотреть сколько таких:
-    docker compose exec backend python manage.py shell < backend/scripts/find_stale_yt_urls.py
-
-    # или с RESET=1 чтобы сбросить parsing_status_player='not_parsed':
-    docker compose exec -e RESET=1 backend python manage.py shell < backend/scripts/find_stale_yt_urls.py
+С RESET=1 — сбросит parsing_status_player='not_parsed' для перепарсинга:
+    docker compose exec -T -e RESET=1 backend python manage.py shell \\
+      < backend/scripts/find_stale_yt_urls.py
 """
 import os
 import re
 
-from apps.scrapers.models import YtConnectContent
+from apps.scrapers.models import YtConnectContent, Content
 
 
 STALE_PATTERNS = [
@@ -47,29 +46,96 @@ def has_stale(content_url):
     return False
 
 
-qs = YtConnectContent.objects.filter(
-    parsing_status_player="parsed",
-    content_url__isnull=False,
-).only("content_id", "content_url", "is_serial")
+# ========== 1. YtConnectContent ==========
+print("=" * 60)
+print("1. YtConnectContent")
+print("=" * 60)
 
-stale_ids = []
-total = 0
-for rec in qs.iterator(chunk_size=500):
-    total += 1
+# Распределение по статусам
+print("По parsing_status_player:")
+from django.db.models import Count
+
+for row in (
+    YtConnectContent.objects.values("parsing_status_player")
+    .annotate(n=Count("id"))
+    .order_by("parsing_status_player")
+):
+    print(f"  {row['parsing_status_player']:15} : {row['n']}")
+
+yt_qs = YtConnectContent.objects.filter(content_url__isnull=False).only(
+    "content_id", "content_url"
+)
+
+yt_stale_ids = []
+yt_total = 0
+for rec in yt_qs.iterator(chunk_size=500):
+    yt_total += 1
     if has_stale(rec.content_url):
-        stale_ids.append(rec.content_id)
+        yt_stale_ids.append(rec.content_id)
 
-print(f"Всего записей с parsed: {total}")
-print(f"Из них со stale URL:    {len(stale_ids)}")
-if stale_ids[:20]:
-    print(f"Первые 20 ID:           {stale_ids[:20]}")
+print(f"\nЗаписей с непустым content_url: {yt_total}")
+print(f"Из них stale:                    {len(yt_stale_ids)}")
+if yt_stale_ids[:20]:
+    print(f"Первые 20:                       {yt_stale_ids[:20]}")
 
-if RESET and stale_ids:
-    n = YtConnectContent.objects.filter(content_id__in=stale_ids).update(
+
+# ========== 2. Content.film_content_uz ==========
+print("\n" + "=" * 60)
+print("2. Content.film_content_uz")
+print("=" * 60)
+
+content_qs = Content.objects.filter(film_content_uz__isnull=False).only(
+    "id", "id_uz", "kino_poisk_id", "name_ru", "film_content_uz"
+)
+
+content_stale_ids = []
+content_stale_id_uz = []
+content_total = 0
+for rec in content_qs.iterator(chunk_size=500):
+    content_total += 1
+    if has_stale(rec.film_content_uz):
+        content_stale_ids.append(rec.id)
+        if rec.id_uz:
+            content_stale_id_uz.append(rec.id_uz)
+
+print(f"\nContent с непустым film_content_uz: {content_total}")
+print(f"Из них stale:                       {len(content_stale_ids)}")
+if content_stale_ids[:20]:
+    print(f"Первые 20 (Content.id):             {content_stale_ids[:20]}")
+
+
+# ========== RESET ==========
+print("\n" + "=" * 60)
+all_stale_yt_ids = set(yt_stale_ids) | set(content_stale_id_uz)
+print(f"Итого уникальных yangi content_id со stale URL: {len(all_stale_yt_ids)}")
+
+if RESET and all_stale_yt_ids:
+    # Если запись в YtConnectContent отсутствует — создаём для перепарсинга.
+    existing = set(
+        YtConnectContent.objects.filter(content_id__in=all_stale_yt_ids).values_list(
+            "content_id", flat=True
+        )
+    )
+    missing = all_stale_yt_ids - existing
+    if missing:
+        YtConnectContent.objects.bulk_create(
+            [
+                YtConnectContent(
+                    content_id=cid,
+                    parsing_status="parsed",
+                    parsing_status_player="not_parsed",
+                )
+                for cid in missing
+            ],
+            ignore_conflicts=True,
+        )
+        print(f"Создано отсутствующих записей: {len(missing)}")
+
+    n = YtConnectContent.objects.filter(content_id__in=all_stale_yt_ids).update(
         parsing_status_player="not_parsed",
         player_fail_count=0,
     )
-    print(f"\n✅ Сброшено в not_parsed: {n}")
-    print("Диспетчер spawn_yt_movie_urls подберёт их пачками по 20.")
-elif stale_ids:
-    print(f"\n[dry-run] Чтобы сбросить статус — запусти с RESET=1")
+    print(f"✅ Сброшено в not_parsed: {n}")
+    print("Дальше — spawn_yt_movie_urls (beat) или вручную раскидать в очередь.")
+elif all_stale_yt_ids:
+    print("[dry-run] чтобы сбросить — запусти с -e RESET=1")

@@ -150,7 +150,10 @@ def _decrypt_chunks(parts) -> str | None:
 def _parse_episode_name(name: str):
     """
     Из 'N-qism Mp' → (episode_number, quality_str).
-    Примеры: '8-qism 1080p' → (8, '1080p'); '7-qism 720p' → (7, '720p').
+    Примеры:
+      '8-qism 1080p' → (8, '1080p'); '7-qism 720p' → (7, '720p');
+      '8-qism (oxirgi)' → (8, None);  '5-qism' → (5, None).
+    Если качества нет в имени — вернём None, потом определим из URL.
     """
     if not name:
         return None, None
@@ -159,6 +162,14 @@ def _parse_episode_name(name: str):
     ep = int(ep_match.group(1)) if ep_match else None
     quality = f"{q_match.group(1)}p" if q_match else None
     return ep, quality
+
+
+def _detect_quality_from_url(url: str) -> str:
+    """Если в URL встречается '480p'/'720p'/'1080p' — вернёт; иначе 'default'."""
+    if not url:
+        return "default"
+    m = re.search(r"(2160|1440|1080|720|480|360)p", url, re.IGNORECASE)
+    return f"{m.group(1)}p" if m else "default"
 
 
 def _parse_season_name(name: str):
@@ -223,12 +234,16 @@ def _decrypt_serial_urls(api_data) -> dict:
             if not isinstance(episode_obj, dict):
                 continue
             ep_num, quality = _parse_episode_name(episode_obj.get("name", ""))
-            if ep_num is None or quality is None:
+            if ep_num is None:
                 continue
             try:
                 url = _decrypt_chunks(episode_obj.get("fileA"))
                 if not url:
                     continue
+                # Старые сезоны не содержат качество в имени эпизода —
+                # вытаскиваем из самого URL (там бывает '480p'/'1080p').
+                if quality is None:
+                    quality = _detect_quality_from_url(url)
                 ep_key = str(ep_num)
                 result.setdefault(season_key, {}).setdefault(ep_key, {})[quality] = url
             except Exception as e:

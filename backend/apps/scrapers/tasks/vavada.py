@@ -7,11 +7,11 @@ from django.utils import timezone
 from datetime import timedelta
 from django.db.models import Q
 from selenium.webdriver.chrome.service import Service
-from fake_useragent import UserAgent
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
+from selenium_stealth import stealth
 from bs4 import BeautifulSoup
 
 from ..models import Content, ScraperLog
@@ -52,30 +52,31 @@ def _kill_zombie_chrome():
 
 
 def create_driver():
-    """Создает драйвер, подключаясь к удаленному браузеру или локальному"""
+    """Создает драйвер с максимальной маскировкой под реальный браузер."""
 
     _kill_zombie_chrome()
-
-    ua = UserAgent()
-    random_user_agent = ua.random
 
     options = Options()
     options.binary_location = "/usr/bin/chromium"
 
+    options.add_argument("--headless=new")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--window-size=1920,1080")
+    options.add_argument("--start-maximized")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument("--disable-infobars")
     options.add_argument("--lang=ru-RU")
+    options.add_argument(
+        "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/148.0.0.0 Safari/537.36"
+    )
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option("useAutomationExtension", False)
     options.add_experimental_option(
         "prefs", {"intl.accept_languages": "ru,ru-RU,en-US,en"}
     )
-
-    options.add_argument(f"user-agent={random_user_agent}")
-    options.add_argument("--headless=new")  # В докере только headless
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    options.add_experimental_option("useAutomationExtension", False)
 
     service = Service(executable_path="/usr/bin/chromedriver")
     driver = webdriver.Chrome(service=service, options=options)
@@ -83,11 +84,14 @@ def create_driver():
     driver.set_page_load_timeout(45)
     driver.set_script_timeout(30)
 
-    driver.execute_cdp_cmd(
-        "Page.addScriptToEvaluateOnNewDocument",
-        {
-            "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-        },
+    stealth(
+        driver,
+        languages=["ru-RU", "ru", "en-US", "en"],
+        vendor="Google Inc.",
+        platform="Win32",
+        webgl_vendor="Intel Inc.",
+        renderer="Intel Iris OpenGL Engine",
+        fix_hairline=True,
     )
 
     return driver

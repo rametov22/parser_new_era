@@ -313,7 +313,10 @@ def parse_single_iframe(self, kp_id):
                 else:
                     film.last_season = None
 
-        film.audio_tracks = filtered_audio_tracks
+        # Сохраняем audio_tracks только если плеер вернул данные.
+        # Если бот-чекер заблокировал страницу — не затираем существующие треки.
+        if filtered_audio_tracks:
+            film.audio_tracks = filtered_audio_tracks
 
         # Выходим из фрейма для переменных плеера
         driver.switch_to.default_content()

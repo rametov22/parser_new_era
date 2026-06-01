@@ -147,23 +147,15 @@ def parse_vavada_serial(self, kp_id):
                 )
             )
         except Exception:
-            # Плеер не появился — оставляем last_update свежим (диспатчер
-            # уже его обновил), попробуем через 7 дней снова.
             logger.warning(f"[serial] {kp_id} | плеер не найден")
             return f"No player for {kp_id}"
 
-        # Внутри playerFrame от obrut.show есть стаб + nested iframe #visual.
-        # Реальный плеер может быть либо в playerFrame, либо в #visual.
-        # Ждём именно появления pjsdiv-элементов в одном из фреймов —
-        # длина page_source ненадёжна (PlayerJS-скрипт грузится раньше,
-        # чем рисует UI).
         driver.switch_to.frame(0)
         player_loaded = False
         in_visual = False
         deadline = time.time() + 60
         last_log = 0
         while time.time() < deadline:
-            # Проверяем playerFrame
             try:
                 pjs_top = len(driver.find_elements(By.CSS_SELECTOR, "pjsdiv"))
             except Exception:
@@ -174,7 +166,6 @@ def parse_vavada_serial(self, kp_id):
                 in_visual = False
                 break
 
-            # Заходим в #visual
             pjs_vis = 0
             try:
                 visual = driver.find_element(By.ID, "visual")
@@ -184,7 +175,6 @@ def parse_vavada_serial(self, kp_id):
                 if pjs_vis > 0:
                     player_loaded = True
                     break
-                # Не нашли — выходим обратно в playerFrame
                 driver.switch_to.parent_frame()
                 in_visual = False
             except Exception:
@@ -209,7 +199,6 @@ def parse_vavada_serial(self, kp_id):
             f"[serial-debug] {kp_id} | плеер найден в "
             f"{'visual iframe' if in_visual else 'playerFrame'}"
         )
-        # Даём плееру дорисовать списки (sea/sez/eps)
         time.sleep(3)
         soup = BeautifulSoup(driver.page_source, "lxml")
 
@@ -223,7 +212,6 @@ def parse_vavada_serial(self, kp_id):
             f"track_div={track_div is not None}"
         )
         if track_div:
-            # Аудиодорожки
             playlist = track_div.find("pjsdiv", id="player_playlist1")
             if playlist:
                 playlist_scroll = playlist.find("pjsdiv", class_="pjsplplayerscroll")
@@ -234,10 +222,7 @@ def parse_vavada_serial(self, kp_id):
                         if text:
                             filtered_audio_tracks.append(text)
 
-        # Хелперы через JS — единственный надёжный способ читать содержимое
-        # выпадающих списков плеера (background pjsdiv путаются с реальными).
         def _read_items(playlist_id):
-            """Возвращает список текстов реальных пунктов в указанном playlist."""
             try:
                 return driver.execute_script(
                     """
@@ -254,7 +239,6 @@ def parse_vavada_serial(self, kp_id):
                 return []
 
         def _click_item(playlist_id, idx):
-            """Клик по элементу в playlist через имитацию mouse events."""
             try:
                 return driver.execute_script(
                     """
@@ -277,7 +261,6 @@ def parse_vavada_serial(self, kp_id):
                 return None
 
         def _max_number(items):
-            """Возвращает (idx_первого_с_max, max_number) или (None, None)."""
             nums = []
             for idx, text in enumerate(items):
                 if text:
@@ -288,14 +271,12 @@ def parse_vavada_serial(self, kp_id):
                 return None, None
             return max(nums, key=lambda x: x[1])
 
-        # Аудиодорожки — читаем для сохранения в БД
         audio_items_text = _read_items("player_playlist1")
         filtered_audio_tracks = [t for t in audio_items_text if t]
         logger.info(
             f"[serial-debug] {kp_id} | audio tracks: {len(filtered_audio_tracks)}"
         )
 
-        # Сезоны — читаем
         season_items = _read_items("player_playlist3")
         season_idx, max_season = _max_number(season_items)
         if max_season is not None:
@@ -305,19 +286,11 @@ def parse_vavada_serial(self, kp_id):
             f"last_season={last_season}"
         )
 
-        # Кликаем по последнему сезону. После клика, пока аудио ещё не
-        # выбрано, эпизоды появляются в player_playlist1 (на месте аудио,
-        # с заголовком "..."). Когда аудио уже выбрано — в player_playlist2.
         if season_idx is not None and season_idx > 0:
             clicked = _click_item("player_playlist3", season_idx)
             logger.info(f"[serial-debug] {kp_id} | clicked season: {clicked!r}")
-            time.sleep(4)  # подольше — даём плееру догрузить эпизоды
+            time.sleep(4)
 
-        # Читаем эпизоды из обоих плейлистов — в зависимости от того,
-        # выбрано ли аудио после клика по сезону, эпизоды могут оказаться
-        # в player_playlist1 (с заголовком "...") или player_playlist2.
-        # Отфильтровываем элементы с "сезон" — это не эпизоды, а список
-        # сезонов, который может оказаться в любом из этих слотов.
         def _only_episodes(items):
             return [t for t in items if t and "сезон" not in t.lower()]
 

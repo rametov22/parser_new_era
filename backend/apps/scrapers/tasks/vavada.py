@@ -12,7 +12,6 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium_stealth import stealth
-from pyvirtualdisplay import Display
 from bs4 import BeautifulSoup
 
 from ..models import Content, ScraperLog
@@ -53,19 +52,13 @@ def _kill_zombie_chrome():
 
 
 def create_driver():
-    """
-    Запускает Chrome через Xvfb (виртуальный дисплей) — без headless-режима.
-    Это обходит bot-detection, которая детектирует headless по GPU/рендерингу.
-    """
+    """Создаёт headless Chrome с максимальной маскировкой под реальный браузер."""
     _kill_zombie_chrome()
-
-    display = Display(visible=False, size=(1920, 1080), color_depth=24)
-    display.start()
 
     options = Options()
     options.binary_location = "/usr/bin/chromium"
 
-    # Без --headless: Chrome работает как настоящий браузер на виртуальном дисплее
+    options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1920,1080")
@@ -99,23 +92,15 @@ def create_driver():
         fix_hairline=True,
     )
 
-    # Сохраняем display на объекте driver для корректного завершения
-    driver._xvfb_display = display
     return driver
 
 
 def quit_driver(driver):
-    """Закрывает Chrome и виртуальный дисплей Xvfb."""
+    """Закрывает Chrome."""
     try:
         driver.quit()
     except Exception:
         pass
-    display = getattr(driver, "_xvfb_display", None)
-    if display:
-        try:
-            display.stop()
-        except Exception:
-            pass
 
 
 VAVADA_QUEUE_NAME = "vavada_queue"

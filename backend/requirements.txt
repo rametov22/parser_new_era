@@ -6,7 +6,6 @@ beautifulsoup4==4.14.3
 django-celery-beat==2.8.1
 selenium==4.40.0
 selenium-stealth==1.0.6
-pyvirtualdisplay==3.0
 python-decouple==3.8
 psycopg2==2.9.11
 fake-useragent==2.2.0

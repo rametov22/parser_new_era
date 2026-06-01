@@ -31,7 +31,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 
 from ..models import Content, ScraperLog
-from .vavada import create_driver, get_chrome_count
+from .vavada import create_driver, quit_driver, get_chrome_count
 
 
 logger = logging.getLogger("vavada_serials")
@@ -366,10 +366,7 @@ def parse_vavada_serial(self, kp_id):
         error_msg = str(exc).split("\n")[0][:80]
         logger.error(f"❌ {kp_id} | FAILED | {error_msg}")
         if driver:
-            try:
-                driver.quit()
-            except Exception:
-                pass
+            quit_driver(driver)
         ScraperLog.objects.create(
             task_name=f"Vavada serial refresh {kp_id}",
             status="error",
@@ -378,13 +375,8 @@ def parse_vavada_serial(self, kp_id):
         try:
             raise self.retry(exc=exc, countdown=60)
         except self.MaxRetriesExceededError:
-            # Все попытки исчерпаны — last_update уже обновлён диспатчером,
-            # следующая попытка через SERIALS_REFRESH_DAYS дней.
             logger.error(f"☠️ {kp_id} | retries исчерпаны")
             raise
     finally:
         if driver:
-            try:
-                driver.quit()
-            except Exception:
-                pass
+            quit_driver(driver)

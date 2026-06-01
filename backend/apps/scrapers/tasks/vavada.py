@@ -12,6 +12,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium_stealth import stealth
+from pyvirtualdisplay import Display
 from bs4 import BeautifulSoup
 
 from ..models import Content, ScraperLog
@@ -52,18 +53,22 @@ def _kill_zombie_chrome():
 
 
 def create_driver():
-    """Создает драйвер с максимальной маскировкой под реальный браузер."""
-
+    """
+    Запускает Chrome через Xvfb (виртуальный дисплей) — без headless-режима.
+    Это обходит bot-detection, которая детектирует headless по GPU/рендерингу.
+    """
     _kill_zombie_chrome()
+
+    display = Display(visible=False, size=(1920, 1080), color_depth=24)
+    display.start()
 
     options = Options()
     options.binary_location = "/usr/bin/chromium"
 
-    options.add_argument("--headless=new")
+    # Без --headless: Chrome работает как настоящий браузер на виртуальном дисплее
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1920,1080")
-    options.add_argument("--start-maximized")
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--disable-infobars")
     options.add_argument("--lang=ru-RU")
@@ -94,7 +99,23 @@ def create_driver():
         fix_hairline=True,
     )
 
+    # Сохраняем display на объекте driver для корректного завершения
+    driver._xvfb_display = display
     return driver
+
+
+def quit_driver(driver):
+    """Закрывает Chrome и виртуальный дисплей Xvfb."""
+    try:
+        driver.quit()
+    except Exception:
+        pass
+    display = getattr(driver, "_xvfb_display", None)
+    if display:
+        try:
+            display.stop()
+        except Exception:
+            pass
 
 
 VAVADA_QUEUE_NAME = "vavada_queue"
@@ -382,15 +403,13 @@ def parse_single_iframe(self, kp_id):
         logger.error(f"❌ {kp_id} | FAILED | Error: {error_msg}")
 
         if driver:
-            driver.quit()
+            quit_driver(driver)
         ScraperLog.objects.create(
             task_name=f"Vavada parser {kp_id}", status="error", message=str(exc)
         )
         try:
             raise self.retry(exc=exc, countdown=60)
         except self.MaxRetriesExceededError:
-            # Все ретраи исчерпаны — сбрасываем статус, чтобы диспетчер
-            # подхватил фильм снова при следующем запуске.
             Content.objects.filter(kino_poisk_id=kp_id).update(
                 is_parsed_ru="not_parsed",
                 last_update=(timezone.now() - timedelta(days=3, hours=20)).date(),
@@ -399,4 +418,4 @@ def parse_single_iframe(self, kp_id):
             raise
     finally:
         if driver:
-            driver.quit()
+            quit_driver(driver)

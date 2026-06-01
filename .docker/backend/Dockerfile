@@ -14,6 +14,7 @@ RUN apt-get update && apt-get install -y \
     libgdbm-dev \
     chromium \
     chromium-driver \
+    xvfb \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 

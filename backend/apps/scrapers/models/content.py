@@ -253,6 +253,7 @@ class Content(models.Model):
     poster_uz = StdImageField(upload_to="content_media_uz/", null=True, blank=True)
     last_season_uz = models.IntegerField(null=True, blank=True)
     last_episode_uz = models.IntegerField(null=True, blank=True)
+    add_content_date_uz = models.DateField(null=True, blank=True)
 
     language = models.CharField(default="Русский")
 

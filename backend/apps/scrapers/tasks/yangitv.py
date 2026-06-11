@@ -44,7 +44,7 @@ logger.setLevel(logging.INFO)
 YT_API_BASE = "https://admin.yangi.tv/api/v1"
 YT_BEARER_TOKEN = config(
     "YT_BEARER_TOKEN",
-    default="177270|r1Sy3xfJltnuQmSX8HGnoxbYsJ3BlKvzHbSiGJxK16f9df4a",
+    default="414307|9GZiGExoNwcwAQkL7inXsWetcbpX0svd4Ygw93QNc995ccb1",
 )
 # AES-ключи извлечены из официального приложения yangi.tv (Frida)
 YT_AES_KEY = config(
@@ -554,7 +554,10 @@ def parse_yt_connect(self, content_id):
                     or content_original.film_content_uz == {}
                 )
             ):
-                extra = {"film_content_uz": existing_yt.content_url}
+                extra = {
+                    "film_content_uz": existing_yt.content_url,
+                    "add_content_date_uz": timezone.now().date(),
+                }
                 if existing_yt.is_serial and isinstance(existing_yt.content_url, dict):
                     try:
                         seasons = sorted(existing_yt.content_url.keys(), key=int)
@@ -673,7 +676,10 @@ def parse_yt_movie_url(self, content_id):
         )
 
         # Копируем в Content. Для сериала ещё last_season_uz / last_episode_uz.
-        content_update = {"film_content_uz": urls}
+        content_update = {
+            "film_content_uz": urls,
+            "add_content_date_uz": timezone.now().date(),
+        }
         if is_serial and urls:
             try:
                 seasons = sorted(urls.keys(), key=int)
@@ -737,6 +743,61 @@ def expire_yt_stuck():
         f"[yt-expire] стак-connect: {stuck_connect}, стак-player: {stuck_player}"
     )
     return {"stuck_connect": stuck_connect, "stuck_player": stuck_player}
+
+
+# ============================================================
+# 5. RETRY — возвращаем в работу failed и «player есть, но не связано»
+# ============================================================
+@shared_task(queue="default")
+def retry_yt_failed():
+    """
+    Периодический recovery (рекомендуется раз в ~6 часов):
+
+      1. failed connect/player → not_parsed + обнуление счётчика попыток.
+         Даём свежие MAX_FAIL_ATTEMPTS попыток — часть сбоев временные
+         (моргнул API, "no urls decoded" в тот момент и т.п.).
+
+      2. player='parsed', но не попавшие в Content (нет матча по имени+году) →
+         сбрасываем connect в not_parsed, чтобы пересматчить. По мере того как
+         KP-сторона дозаполняет name_ru, матч находится, и уже готовый
+         content_url копируется в film_content_uz (см. parse_yt_connect).
+
+    Темп задают существующие диспетчеры с их rate_limit=6/m — здесь только
+    переводим статусы, фактический перепарс идёт штатным путём.
+    """
+    now = timezone.now()
+
+    failed_connect = YtConnectContent.objects.filter(
+        parsing_status="failed"
+    ).update(parsing_status="not_parsed", connect_fail_count=0, updated_at=now)
+
+    failed_player = YtConnectContent.objects.filter(
+        parsing_status_player="failed"
+    ).update(parsing_status_player="not_parsed", player_fail_count=0, updated_at=now)
+
+    # «player есть, но не связано»: player спарсен, но ни один Content с этим
+    # id_uz не имеет заполненного film_content_uz → пересматчиваем connect.
+    linked_filled = set(
+        Content.objects.exclude(id_uz__isnull=True)
+        .exclude(film_content_uz={})
+        .exclude(film_content_uz__isnull=True)
+        .values_list("id_uz", flat=True)
+    )
+    relink = (
+        YtConnectContent.objects.filter(parsing_status_player="parsed")
+        .exclude(content_id__in=linked_filled)
+        .update(parsing_status="not_parsed", updated_at=now)
+    )
+
+    logger.info(
+        f"[yt-retry] failed-connect→{failed_connect}, "
+        f"failed-player→{failed_player}, relink→{relink}"
+    )
+    return {
+        "failed_connect": failed_connect,
+        "failed_player": failed_player,
+        "relink": relink,
+    }
 
 
 # ============================================================

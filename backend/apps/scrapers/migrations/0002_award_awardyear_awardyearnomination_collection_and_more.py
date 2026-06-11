@@ -106,6 +106,7 @@ class Migration(migrations.Migration):
                 ('poster_uz', apps.stdimage.models.StdImageField(blank=True, force_min_size=False, max_length=250, null=True, upload_to='content_media_uz/', variations={'full_size': (1920, -1), 'large': (1366, -1), 'medium': (800, -1), 'small': (400, -1), 'thumbnail': (100, -1)})),
                 ('last_season_uz', models.IntegerField(blank=True, null=True)),
                 ('last_episode_uz', models.IntegerField(blank=True, null=True)),
+                ('add_content_date_uz', models.DateField(blank=True, null=True)),
                 ('language', models.CharField(default='Русский')),
                 ('is_parsed_kp', models.CharField(choices=[('not_parsed', 'Not parsed'), ('in_progress', 'In Progress'), ('parsed', 'Parsed')], default='not_parsed', max_length=20)),
                 ('is_parsed_uz', models.CharField(choices=[('not_parsed', 'Not parsed'), ('in_progress', 'In Progress'), ('parsed', 'Parsed')], default='not_parsed', max_length=20)),

@@ -238,6 +238,17 @@ def parse_single_iframe(self, kp_id):
     start_time = timezone.now()
     try:
         film = Content.objects.get(kino_poisk_id=kp_id)
+
+        # Перезахватываем in_progress на момент РЕАЛЬНОГО старта обработки
+        # (а не постановки в очередь). При длинной очереди фильм ждёт дольше
+        # IN_PROGRESS_STUCK_MINUTES, expire успевает сбросить его в not_parsed,
+        # и финальный атомарный UPDATE filter(is_parsed_ru="in_progress") не
+        # находит строку → parsed/parse_count не фиксируются, фильм парсится
+        # повторно. Свежий parsed_at_ru рестартит таймер expire от старта.
+        Content.objects.filter(pk=film.pk).update(
+            is_parsed_ru="in_progress", parsed_at_ru=timezone.now()
+        )
+
         driver = create_driver()
 
         # Логика из check_and_pars_iframe

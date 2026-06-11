@@ -214,7 +214,7 @@ def expire_stuck_vavada_task():
     bind=True,
     queue="vavada_queue",
     max_retries=3,
-    rate_limit="10/m",
+    rate_limit="30/m",
     acks_late=True,
     soft_time_limit=180,
     time_limit=210,

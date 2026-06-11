@@ -5,6 +5,10 @@ x-backend-defaults: &backend-defaults
   build:
     context: .
     dockerfile: ./.docker/backend/Dockerfile
+  # tini как PID 1 пожинает осиротевшие chrome/chromedriver (зомби),
+  # иначе они копятся под pids_limit и Chrome перестаёт стартовать
+  # ("failed to start a thread for the new session").
+  init: true
   env_file:
     - ./.env
   volumes:

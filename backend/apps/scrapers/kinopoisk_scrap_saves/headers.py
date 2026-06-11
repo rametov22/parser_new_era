@@ -19,8 +19,13 @@ def update_mains(
     changed_fields = []
 
     def check_and_update(field_name, new_value):
+        # Не затираем уже сохранённые данные пустым результатом скрейпа.
+        # Если страница не распарсилась, new_value приходит None/"" — пропускаем,
+        # иначе ловим IntegrityError на NOT NULL колонках (name_ru и т.п.).
+        if new_value is None or new_value == "":
+            return
         old_value = getattr(content_obj, field_name)
-        if not old_value or (new_value and old_value != new_value):
+        if not old_value or old_value != new_value:
             setattr(content_obj, field_name, new_value)
             changed_fields.append(field_name)
 
@@ -36,11 +41,13 @@ def update_mains(
     check_and_update("short_description", short_description)
     check_and_update("short_description_ru", short_description)
 
-    content_obj.kino_poisk_rating = kino_poisk_rating
-    changed_fields.append("kino_poisk_rating")
+    if kino_poisk_rating is not None and content_obj.kino_poisk_rating != kino_poisk_rating:
+        content_obj.kino_poisk_rating = kino_poisk_rating
+        changed_fields.append("kino_poisk_rating")
 
-    content_obj.imdb_rating = imdb_rating
-    changed_fields.append("imdb_rating")
+    if imdb_rating is not None and content_obj.imdb_rating != imdb_rating:
+        content_obj.imdb_rating = imdb_rating
+        changed_fields.append("imdb_rating")
 
     if content_obj.is_serial != is_serial:
         content_obj.is_serial = is_serial

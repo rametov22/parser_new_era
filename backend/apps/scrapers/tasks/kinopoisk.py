@@ -55,17 +55,35 @@ def create_driver():
     options.add_experimental_option("useAutomationExtension", False)
 
     service = Service(executable_path="/usr/bin/chromedriver")
-    driver = webdriver.Chrome(service=service, options=options)
+    try:
+        driver = webdriver.Chrome(service=service, options=options)
+    except Exception:
+        # webdriver.Chrome упал, но Service уже запустил chromedriver —
+        # без явной остановки он останется живым ребёнком воркера (ppid != 1),
+        # _kill_zombie_chrome его не тронет, и процессы копятся под pids_limit.
+        try:
+            service.stop()
+        except Exception:
+            pass
+        raise
 
-    driver.set_page_load_timeout(45)
-    driver.set_script_timeout(30)
+    try:
+        driver.set_page_load_timeout(45)
+        driver.set_script_timeout(30)
 
-    driver.execute_cdp_cmd(
-        "Page.addScriptToEvaluateOnNewDocument",
-        {
-            "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-        },
-    )
+        driver.execute_cdp_cmd(
+            "Page.addScriptToEvaluateOnNewDocument",
+            {
+                "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+            },
+        )
+    except Exception:
+        # Драйвер создан, но настройка упала — закрываем, иначе утечёт.
+        try:
+            driver.quit()
+        except Exception:
+            pass
+        raise
 
     return driver
 
@@ -236,8 +254,8 @@ def parse_single_film_task(self, kp_id, href, cookies=None):
             content_obj = models.Content(
                 kino_poisk_id=kp_id,
                 is_serial=is_serial,
-                name_ru=name_ru,
-                name_original=name_original,
+                name_ru=name_ru or "",
+                name_original=name_original or "",
                 is_parsed_kp="in_progress",
             )
             content_obj.save()

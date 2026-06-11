@@ -77,20 +77,34 @@ def create_driver():
     )
 
     service = Service(executable_path="/usr/bin/chromedriver")
-    driver = webdriver.Chrome(service=service, options=options)
+    try:
+        driver = webdriver.Chrome(service=service, options=options)
+    except Exception:
+        # webdriver.Chrome упал, но Service уже запустил процесс chromedriver —
+        # без этого он осиротеет и будет копиться (утечка потоков/PID).
+        try:
+            service.stop()
+        except Exception:
+            pass
+        raise
 
-    driver.set_page_load_timeout(45)
-    driver.set_script_timeout(30)
+    try:
+        driver.set_page_load_timeout(45)
+        driver.set_script_timeout(30)
 
-    stealth(
-        driver,
-        languages=["ru-RU", "ru", "en-US", "en"],
-        vendor="Google Inc.",
-        platform="Win32",
-        webgl_vendor="Intel Inc.",
-        renderer="Intel Iris OpenGL Engine",
-        fix_hairline=True,
-    )
+        stealth(
+            driver,
+            languages=["ru-RU", "ru", "en-US", "en"],
+            vendor="Google Inc.",
+            platform="Win32",
+            webgl_vendor="Intel Inc.",
+            renderer="Intel Iris OpenGL Engine",
+            fix_hairline=True,
+        )
+    except Exception:
+        # Драйвер создан, но настройка упала — закрываем, иначе тоже утечёт.
+        quit_driver(driver)
+        raise
 
     return driver
 

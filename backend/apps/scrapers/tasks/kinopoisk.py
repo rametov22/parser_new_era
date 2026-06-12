@@ -361,3 +361,6 @@ def parse_single_film_task(self, kp_id, href, cookies=None):
                 driver.quit()
             except Exception:
                 pass
+        from .vavada import report_chrome_heartbeat
+
+        report_chrome_heartbeat("kp_films")

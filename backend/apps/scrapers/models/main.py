@@ -9,6 +9,14 @@ class ScraperLog(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     message = models.TextField()
 
+    class Meta:
+        # Индексы под запросы дашборда (активность/ошибки по окнам времени).
+        indexes = [
+            models.Index(fields=["created_at"]),
+            models.Index(fields=["status", "created_at"]),
+            models.Index(fields=["task_name", "status", "created_at"]),
+        ]
+
 
 class YtConnectContent(models.Model):
     """

@@ -1,5 +1,6 @@
 {% extends "admin/base_site.html" %}
 {% load humanize %}
+{% load l10n %}
 
 {% block title %}Статистика парсеров{% endblock %}
 
@@ -8,451 +9,1033 @@
 {% endblock %}
 
 {% block content %}
+{# localize off: под ru-локалью floatformat даёт запятую («33,33»), что ломает
+   CSS width:33,33%. Отключаем локализацию чисел во всём дашборде → точки. #}
+{% localize off %}
 <style>
 :root {
-    --card-bg: var(--body-bg);
-    --card-border: var(--border-color, #79aec8);
-    --card-fg: var(--body-fg);
-    --card-muted: var(--body-quiet-color, #999);
-    --accent: var(--link-fg, #79aec8);
-    --accent-strong: var(--link-hover-color, #417690);
+    --ps-bg:        var(--body-bg, #fff);
+    --ps-surface:   #ffffff;
+    --ps-surface-2: #f6f8fa;
+    --ps-border:    #e3e8ee;
+    --ps-fg:        #1f2933;
+    --ps-fg-soft:   #52606d;
+    --ps-muted:     #8895a7;
+    --ps-accent:    #4f6bed;
+    --ps-accent-fg: #ffffff;
+
+    /* статусная палитра */
+    --ps-ok:        #18a957;   /* зелёный — готово / свежо */
+    --ps-ok-bg:     rgba(24,169,87,.12);
+    --ps-warn:      #e0a106;   /* жёлтый — в работе / ждёт */
+    --ps-warn-bg:   rgba(224,161,6,.13);
+    --ps-idle:      #9aa5b1;   /* серый — не начато / устарело */
+    --ps-idle-bg:   rgba(154,165,177,.16);
+    --ps-bad:       #e0533d;   /* красный — застряло / failed */
+    --ps-bad-bg:    rgba(224,83,61,.13);
+
+    --ps-radius:    14px;
+    --ps-radius-sm: 9px;
+    --ps-shadow:    0 1px 2px rgba(16,24,40,.05), 0 4px 16px rgba(16,24,40,.06);
+    --ps-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
 }
 
 @media (prefers-color-scheme: dark) {
-    :root {
-        --card-bg: #2a2d2e;
-        --card-border: #444;
-        --card-fg: #e0e0e0;
-        --card-muted: #888;
-        --accent: #6ec3e0;
-        --accent-strong: #79aec8;
-    }
+:root {
+    --ps-bg:        #1b1e24;
+    --ps-surface:   #23272e;
+    --ps-surface-2: #1f232a;
+    --ps-border:    #353b45;
+    --ps-fg:        #e7ebf0;
+    --ps-fg-soft:   #b6bfca;
+    --ps-muted:     #7d8896;
+    --ps-accent:    #7c92ff;
+    --ps-accent-fg: #11141a;
+
+    --ps-ok:        #3ddc84;
+    --ps-ok-bg:     rgba(61,220,132,.13);
+    --ps-warn:      #f5c451;
+    --ps-warn-bg:   rgba(245,196,81,.13);
+    --ps-idle:      #6b7685;
+    --ps-idle-bg:   rgba(107,118,133,.18);
+    --ps-bad:       #ff7a66;
+    --ps-bad-bg:    rgba(255,122,102,.14);
+
+    --ps-shadow:    0 1px 2px rgba(0,0,0,.4), 0 4px 18px rgba(0,0,0,.35);
+}
 }
 
-.parser-stats-wrap {
-    max-width: 1600px;
+/* ===== layout ===== */
+.ps {
+    max-width: 1640px;
     margin: 0 auto;
-    color: var(--card-fg);
+    color: var(--ps-fg);
+    font-feature-settings: "tnum" 1, "lnum" 1;
 }
+.ps * { box-sizing: border-box; }
 
-.parser-stats-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 20px;
-    margin-bottom: 32px;
-}
-
-@media (max-width: 1200px) {
-    .parser-stats-grid { grid-template-columns: 1fr; }
-}
-
-.parser-card {
-    background: var(--card-bg);
-    border: 1px solid var(--card-border);
-    border-radius: 10px;
-    padding: 20px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-    color: var(--card-fg);
-}
-.parser-card h2 {
-    margin: 0 0 16px;
-    border-bottom: 2px solid var(--accent);
-    padding-bottom: 10px;
-    color: var(--card-fg);
-    font-size: 18px;
-}
-.parser-card h3 {
-    margin: 18px 0 10px;
-    font-size: 12px;
-    color: var(--accent);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    font-weight: bold;
-}
-.parser-card table {
-    width: 100%;
-    border-collapse: collapse;
-}
-.parser-card td {
-    padding: 6px 4px;
-    border-bottom: 1px solid var(--card-border);
-    font-size: 13px;
-    color: var(--card-fg);
-}
-.parser-card td.label {
-    color: var(--card-muted);
-    width: 60%;
-}
-.parser-card td.value {
-    text-align: right;
-    font-weight: bold;
-    font-family: ui-monospace, "SF Mono", Menlo, monospace;
-    color: var(--card-fg);
-}
-
-/* Большое число "циклов завершено" */
-.cycle-summary {
-    text-align: center;
-    margin: 14px 0 18px;
-    padding: 14px;
-    background: linear-gradient(135deg, rgba(110, 195, 224, 0.12), rgba(65, 118, 144, 0.18));
-    border-radius: 8px;
-}
-.big-number {
-    font-size: 48px;
-    color: var(--accent);
-    font-family: ui-monospace, "SF Mono", Menlo, monospace;
-    font-weight: bold;
-    line-height: 1;
-}
-.cycle-summary .label-main {
-    color: var(--card-fg);
-    font-size: 13px;
-    margin-top: 6px;
-    font-weight: 500;
-}
-.cycle-summary .label-sub {
-    color: var(--card-muted);
-    font-size: 11px;
-    margin-top: 4px;
-}
-
-/* Прогресс-бары */
-.cycle-row {
+.ps-topbar {
     display: flex;
     align-items: center;
-    margin: 6px 0;
-    gap: 10px;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin: 4px 0 22px;
 }
-.cycle-label {
-    width: 80px;
+.ps-topbar h2 {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -.01em;
+    color: var(--ps-fg);
+}
+.ps-freshness {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12.5px;
+    color: var(--ps-fg-soft);
+    background: var(--ps-surface);
+    border: 1px solid var(--ps-border);
+    padding: 6px 12px;
+    border-radius: 999px;
+    box-shadow: var(--ps-shadow);
+}
+.ps-freshness .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--ps-ok);
+    box-shadow: 0 0 0 3px var(--ps-ok-bg);
+}
+.ps-freshness a {
+    color: var(--ps-accent);
+    text-decoration: none;
+    font-weight: 600;
+}
+.ps-freshness a:hover { text-decoration: underline; }
+
+/* ===== общий health-ряд ===== */
+.ps-health {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+    gap: 14px;
+    margin-bottom: 26px;
+}
+.ps-kpi {
+    background: var(--ps-surface);
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius);
+    padding: 16px 18px;
+    box-shadow: var(--ps-shadow);
+    position: relative;
+    overflow: hidden;
+}
+.ps-kpi .lbl {
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--ps-muted);
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+.ps-kpi .val {
+    font-family: var(--ps-mono);
+    font-size: 27px;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--ps-fg);
+}
+.ps-kpi .sub {
     font-size: 12px;
-    color: var(--card-fg);
-    font-family: ui-monospace, monospace;
-    font-weight: 500;
+    color: var(--ps-fg-soft);
+    margin-top: 6px;
 }
-.cycle-bar-bg {
+.ps-kpi.accent { border-left: 3px solid var(--ps-accent); }
+.ps-kpi.ok     .val { color: var(--ps-ok); }
+.ps-kpi.warn   .val { color: var(--ps-warn); }
+.ps-kpi.bad    .val { color: var(--ps-bad); }
+
+/* ===== карточки парсеров ===== */
+.ps-cards {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 20px;
+}
+@media (max-width: 1080px) {
+    .ps-cards { grid-template-columns: 1fr; }
+}
+
+.ps-card {
+    background: var(--ps-surface);
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius);
+    box-shadow: var(--ps-shadow);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+.ps-card.span-2 { grid-column: 1 / -1; }
+
+.ps-card-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--ps-border);
+}
+.ps-card-head .ico {
+    width: 38px; height: 38px;
+    border-radius: 10px;
+    display: grid; place-items: center;
+    font-size: 20px;
+    background: var(--ps-surface-2);
+    border: 1px solid var(--ps-border);
+    flex: none;
+}
+.ps-card-head .ttl {
+    font-size: 16.5px;
+    font-weight: 700;
+    color: var(--ps-fg);
+    line-height: 1.15;
+}
+.ps-card-head .ttl small {
+    display: block;
+    font-size: 11.5px;
+    font-weight: 500;
+    color: var(--ps-muted);
+    margin-top: 2px;
+}
+.ps-card-head .health-pill {
+    margin-left: auto;
+    font-size: 11.5px;
+    font-weight: 700;
+    padding: 4px 11px;
+    border-radius: 999px;
+    white-space: nowrap;
+}
+.health-pill.ok   { color: var(--ps-ok);   background: var(--ps-ok-bg); }
+.health-pill.warn { color: var(--ps-warn); background: var(--ps-warn-bg); }
+.health-pill.bad  { color: var(--ps-bad);  background: var(--ps-bad-bg); }
+.health-pill.idle { color: var(--ps-idle); background: var(--ps-idle-bg); }
+
+.ps-card-body { padding: 18px 20px 20px; }
+
+.ps-scope {
+    font-size: 12px;
+    color: var(--ps-fg-soft);
+    background: var(--ps-surface-2);
+    border: 1px dashed var(--ps-border);
+    border-radius: var(--ps-radius-sm);
+    padding: 9px 12px;
+    margin-bottom: 16px;
+    line-height: 1.5;
+}
+
+/* плитки KPI внутри карточки */
+.ps-tiles {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin-bottom: 18px;
+}
+@media (max-width: 560px) {
+    .ps-tiles { grid-template-columns: repeat(2, 1fr); }
+}
+.ps-tile {
+    background: var(--ps-surface-2);
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius-sm);
+    padding: 12px 13px;
+}
+.ps-tile .t-lbl {
+    font-size: 11px;
+    color: var(--ps-muted);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    margin-bottom: 7px;
+    line-height: 1.2;
+}
+.ps-tile .t-val {
+    font-family: var(--ps-mono);
+    font-size: 21px;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--ps-fg);
+}
+.ps-tile .t-sub {
+    font-size: 11px;
+    color: var(--ps-fg-soft);
+    margin-top: 5px;
+    line-height: 1.3;
+}
+.ps-tile.ok   .t-val { color: var(--ps-ok); }
+.ps-tile.warn .t-val { color: var(--ps-warn); }
+.ps-tile.bad  .t-val { color: var(--ps-bad); }
+
+/* статус-бар (parsed / in_progress / not_parsed) */
+.ps-statusbar { margin: 4px 0 16px; }
+.ps-statusbar .bar-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 7px;
+}
+.ps-statusbar .bar-title {
+    font-size: 11.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    color: var(--ps-fg-soft);
+}
+.ps-statusbar .bar-pct {
+    font-family: var(--ps-mono);
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--ps-ok);
+}
+.ps-track {
+    display: flex;
+    height: 16px;
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--ps-idle-bg);
+    box-shadow: inset 0 0 0 1px var(--ps-border);
+}
+.ps-track > span { height: 100%; transition: width .4s ease; }
+.ps-seg-ok   { background: linear-gradient(90deg, var(--ps-ok),   color-mix(in srgb, var(--ps-ok) 70%, #000)); }
+.ps-seg-warn { background: linear-gradient(90deg, var(--ps-warn), color-mix(in srgb, var(--ps-warn) 70%, #000)); }
+.ps-seg-idle { background: var(--ps-idle); }
+.ps-seg-bad  { background: var(--ps-bad); }
+.ps-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    margin-top: 9px;
+    font-size: 11.5px;
+    color: var(--ps-fg-soft);
+}
+.ps-legend .lg { display: inline-flex; align-items: center; gap: 6px; }
+.ps-legend .sw { width: 9px; height: 9px; border-radius: 3px; }
+.ps-legend .sw.ok   { background: var(--ps-ok); }
+.ps-legend .sw.warn { background: var(--ps-warn); }
+.ps-legend .sw.idle { background: var(--ps-idle); }
+.ps-legend .sw.bad  { background: var(--ps-bad); }
+.ps-legend .n { font-family: var(--ps-mono); font-weight: 700; color: var(--ps-fg); }
+
+/* скорость / активность */
+.ps-speed {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-bottom: 16px;
+}
+.ps-speed .sp {
+    text-align: center;
+    background: var(--ps-surface-2);
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius-sm);
+    padding: 9px 6px;
+}
+.ps-speed .sp .num {
+    font-family: var(--ps-mono);
+    font-weight: 700;
+    font-size: 16px;
+    color: var(--ps-accent);
+}
+.ps-speed .sp .cap {
+    font-size: 10.5px;
+    color: var(--ps-muted);
+    text-transform: uppercase;
+    letter-spacing: .02em;
+    margin-top: 3px;
+}
+
+/* footer карточки: метки времени */
+.ps-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 22px;
+    padding-top: 14px;
+    border-top: 1px dashed var(--ps-border);
+    font-size: 12px;
+    color: var(--ps-fg-soft);
+}
+.ps-meta b {
+    color: var(--ps-fg);
+    font-family: var(--ps-mono);
+    font-weight: 600;
+}
+
+/* ===== ETA баннер ===== */
+.ps-eta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--ps-warn-bg);
+    border: 1px solid color-mix(in srgb, var(--ps-warn) 35%, transparent);
+    border-radius: var(--ps-radius-sm);
+    padding: 11px 14px;
+    margin-bottom: 16px;
+    font-size: 12.5px;
+    color: var(--ps-fg);
+    line-height: 1.45;
+}
+.ps-eta.done {
+    background: var(--ps-ok-bg);
+    border-color: color-mix(in srgb, var(--ps-ok) 35%, transparent);
+}
+.ps-eta .em { font-size: 17px; flex: none; }
+.ps-eta strong { font-family: var(--ps-mono); }
+
+/* ===== pipeline (yangi.tv) ===== */
+.ps-pipe {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr) ;
+    gap: 0;
+    align-items: stretch;
+}
+@media (max-width: 900px) {
+    .ps-pipe { grid-template-columns: 1fr; }
+}
+.ps-stage {
+    position: relative;
+    background: var(--ps-surface-2);
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius-sm);
+    padding: 14px 15px;
+    margin-right: 22px;
+}
+.ps-stage:last-child { margin-right: 0; }
+/* стрелка между стадиями */
+.ps-stage:not(:last-child)::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    right: -19px;
+    width: 16px; height: 16px;
+    transform: translateY(-50%) rotate(45deg);
+    border-top: 2px solid var(--ps-accent);
+    border-right: 2px solid var(--ps-accent);
+    opacity: .8;
+}
+@media (max-width: 900px) {
+    .ps-stage { margin-right: 0; margin-bottom: 26px; }
+    .ps-stage:not(:last-child)::after {
+        top: auto; right: 50%;
+        bottom: -21px;
+        transform: translateX(50%) rotate(135deg);
+    }
+}
+.ps-stage .st-no {
+    display: inline-block;
+    font-family: var(--ps-mono);
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--ps-accent-fg);
+    background: var(--ps-accent);
+    border-radius: 6px;
+    padding: 2px 8px;
+    margin-bottom: 9px;
+}
+.ps-stage .st-name {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--ps-fg);
+    margin-bottom: 3px;
+}
+.ps-stage .st-desc {
+    font-size: 11.5px;
+    color: var(--ps-muted);
+    margin-bottom: 12px;
+    line-height: 1.4;
+    min-height: 32px;
+}
+.ps-stage .st-big {
+    font-family: var(--ps-mono);
+    font-size: 24px;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--ps-fg);
+}
+.ps-stage .st-big.ok { color: var(--ps-ok); }
+.ps-stage .st-bigcap {
+    font-size: 11px;
+    color: var(--ps-fg-soft);
+    margin-top: 4px;
+}
+.ps-stage .st-mini {
+    margin-top: 11px;
+    padding-top: 11px;
+    border-top: 1px dashed var(--ps-border);
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+.ps-stage .st-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--ps-fg-soft);
+}
+.ps-stage .st-row .v { font-family: var(--ps-mono); font-weight: 700; color: var(--ps-fg); }
+.ps-stage .st-row .v.warn { color: var(--ps-warn); }
+.ps-stage .st-row .v.bad  { color: var(--ps-bad); }
+.ps-stage .st-row .v.ok   { color: var(--ps-ok); }
+
+/* мини статус-трек внутри стадии */
+.ps-ministack {
+    display: flex;
+    height: 7px;
+    border-radius: 4px;
+    overflow: hidden;
+    background: var(--ps-idle-bg);
+    margin-top: 11px;
+}
+.ps-ministack > span { height: 100%; }
+
+/* свёрнутая глубина перепарса */
+.ps-depth {
+    margin-top: 16px;
+    border-top: 1px dashed var(--ps-border);
+    padding-top: 6px;
+}
+.ps-depth > summary {
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ps-fg-soft);
+    padding: 8px 0 4px;
+    list-style: none;
+    user-select: none;
+}
+.ps-depth > summary::-webkit-details-marker { display: none; }
+.ps-depth > summary::before {
+    content: "▸ ";
+    color: var(--ps-muted);
+}
+.ps-depth[open] > summary::before { content: "▾ "; }
+.ps-depth .hint {
+    font-size: 11.5px;
+    color: var(--ps-muted);
+    margin: 4px 0 10px;
+    line-height: 1.45;
+}
+.ps-drow {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 5px 0;
+}
+.ps-drow .d-lbl {
+    width: 92px;
+    flex: none;
+    font-size: 11.5px;
+    color: var(--ps-fg-soft);
+    font-family: var(--ps-mono);
+}
+.ps-drow .d-bg {
     flex: 1;
-    background: rgba(127, 127, 127, 0.18);
-    height: 26px;
+    height: 18px;
+    background: var(--ps-idle-bg);
     border-radius: 5px;
     overflow: hidden;
     position: relative;
 }
-.cycle-bar-fg {
+.ps-drow .d-fg {
     height: 100%;
-    transition: width 0.4s ease;
+    background: linear-gradient(90deg, var(--ps-accent), color-mix(in srgb, var(--ps-accent) 65%, #000));
 }
-.cycle-bar-text {
+.ps-drow .d-txt {
     position: absolute;
-    left: 10px;
-    top: 50%;
+    left: 9px; top: 50%;
     transform: translateY(-50%);
-    font-size: 12px;
-    font-family: ui-monospace, monospace;
-    color: var(--card-fg);
-    font-weight: bold;
-    text-shadow: 0 0 4px var(--card-bg);
-    z-index: 1;
+    font-size: 11px;
+    font-family: var(--ps-mono);
+    font-weight: 700;
+    color: var(--ps-fg);
+    white-space: nowrap;
 }
-.cycle-bar-fg.cycle-0 { background: linear-gradient(90deg, #888, #555); }
-.cycle-bar-fg.cycle-1 { background: linear-gradient(90deg, #79aec8, #417690); }
-.cycle-bar-fg.cycle-2 { background: linear-gradient(90deg, #5cb85c, #3d8b3d); }
-.cycle-bar-fg.cycle-3 { background: linear-gradient(90deg, #f0ad4e, #c98c30); }
-.cycle-bar-fg.cycle-4 { background: linear-gradient(90deg, #d9534f, #ac3a37); }
 
-/* Скорость */
-.speed-block {
-    background: rgba(65, 118, 144, 0.10);
-    border-left: 3px solid var(--accent);
-    padding: 12px 14px;
-    margin-top: 12px;
-    border-radius: 4px;
-}
-.speed-block-title {
-    font-weight: bold;
-    margin-bottom: 8px;
-    color: var(--accent);
+.ps-foot {
+    text-align: center;
+    margin: 30px 0 10px;
     font-size: 13px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    color: var(--ps-muted);
 }
-.speed-row {
+.ps-foot a { color: var(--ps-accent); text-decoration: none; font-weight: 600; margin: 0 10px; }
+.ps-foot a:hover { text-decoration: underline; }
+
+/* ===== операционное здоровье ===== */
+.ops-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 12px;
+    margin-bottom: 18px;
+}
+.ops-cell {
+    background: var(--ps-surface-2);
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius-sm);
+    padding: 12px 13px;
+}
+.ops-cell-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 9px;
+}
+.ops-cell-head .ops-ico { font-size: 16px; }
+.ops-cell-head .ops-name {
+    font-size: 13.5px;
+    font-weight: 700;
+    color: var(--ps-fg);
+}
+.ops-cell-head .health-pill { margin-left: auto; font-size: 11px; padding: 3px 9px; }
+.ops-rows { display: flex; flex-direction: column; gap: 5px; }
+.ops-row {
     display: flex;
     justify-content: space-between;
-    margin: 4px 0;
-    font-size: 13px;
-    color: var(--card-fg);
-}
-.speed-row .num {
-    font-family: ui-monospace, monospace;
-    font-weight: bold;
-    color: var(--accent);
-}
-.speed-row.divider {
-    border-top: 1px dashed var(--card-border);
-    margin-top: 8px;
-    padding-top: 8px;
-}
-
-/* ETA */
-.eta-row {
-    background: rgba(240, 173, 78, 0.15);
-    border-left: 3px solid #f0ad4e;
-    padding: 12px 14px;
-    margin-top: 10px;
-    border-radius: 4px;
-    color: var(--card-fg);
-    font-size: 13px;
-    line-height: 1.6;
-}
-.eta-row strong {
-    color: #f0ad4e;
-    font-family: ui-monospace, monospace;
-    font-size: 14px;
-}
-
-.refresh-info {
-    color: var(--card-muted);
+    align-items: baseline;
+    gap: 10px;
     font-size: 12px;
-    margin-bottom: 16px;
-    text-align: center;
+    color: var(--ps-fg-soft);
 }
+.ops-row .v { font-family: var(--ps-mono); font-weight: 700; color: var(--ps-fg); white-space: nowrap; }
+.ops-row .v .ok, .ops-row .ok { color: var(--ps-ok); }
+.ops-row .v .warn, .ops-row .warn { color: var(--ps-warn); }
+.ops-row .v .bad, .ops-row .bad { color: var(--ps-bad); }
 
-.bottom-nav {
+.ops-block-title {
+    font-size: 11.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+    color: var(--ps-fg-soft);
+    margin: 6px 0 10px;
+}
+.ops-sigs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.ops-sig {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12.5px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--ps-border);
+    color: var(--ps-fg);
+}
+.ops-sig b { font-family: var(--ps-mono); }
+.ops-sig.bad  { background: var(--ps-bad-bg);  border-color: color-mix(in srgb, var(--ps-bad) 35%, transparent);  color: var(--ps-bad); }
+.ops-sig.warn { background: var(--ps-warn-bg); border-color: color-mix(in srgb, var(--ps-warn) 35%, transparent); color: var(--ps-warn); }
+.ops-ok {
+    font-size: 13px;
+    color: var(--ps-ok);
+    background: var(--ps-ok-bg);
+    border-radius: var(--ps-radius-sm);
+    padding: 10px 14px;
+    margin-bottom: 16px;
+}
+.ops-two {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 22px;
+}
+@media (max-width: 760px) { .ops-two { grid-template-columns: 1fr; } }
+.ops-chips { display: flex; flex-wrap: wrap; gap: 10px; }
+.ops-chip {
+    min-width: 96px;
+    background: var(--ps-surface-2);
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius-sm);
+    padding: 10px 12px;
     text-align: center;
-    padding: 16px;
-    color: var(--card-muted);
 }
-.bottom-nav a {
-    color: var(--accent);
-    text-decoration: none;
-    font-weight: 500;
-    margin: 0 8px;
-}
-.bottom-nav a:hover {
-    color: var(--accent-strong);
-    text-decoration: underline;
-}
+.ops-chip-top { font-size: 11px; color: var(--ps-muted); font-weight: 600; }
+.ops-chip-num { font-family: var(--ps-mono); font-size: 20px; font-weight: 700; color: var(--ps-fg); margin: 3px 0; }
+.ops-chip-sub { font-size: 10.5px; color: var(--ps-muted); }
+.ops-chip.ok   { border-left: 3px solid var(--ps-ok); }
+.ops-chip.warn { border-left: 3px solid var(--ps-warn); }
+.ops-chip.warn .ops-chip-num { color: var(--ps-warn); }
+.ops-chip.bad  { border-left: 3px solid var(--ps-bad); }
+.ops-chip.bad  .ops-chip-num { color: var(--ps-bad); }
+.ops-chip.idle { border-left: 3px solid var(--ps-idle); opacity: .75; }
+.ops-hint { font-size: 11px; color: var(--ps-muted); margin-top: 10px; line-height: 1.45; }
 </style>
 
-<div class="parser-stats-wrap">
-    <div class="refresh-info">
-        Обновлено: {{ now|date:"Y-m-d H:i:s" }} (UTC) — обнови страницу для актуальных данных.
+<div class="ps">
+
+    <div class="ps-topbar">
+        <h2>Статистика парсеров</h2>
+        <span class="ps-freshness">
+            <span class="dot"></span>
+            данные посчитаны {{ computed_at|timesince }} назад
+            <span style="color:var(--ps-muted)">·</span>
+            <a href="javascript:location.reload()">обновить</a>
+        </span>
     </div>
 
-    <div class="parser-stats-grid">
-        {% for src in srcs %}
-        <div class="parser-card">
-            <h2>{{ src.icon }} {{ src.title }}</h2>
+    {# ============================================================ #}
+    {#  ОБЩЕЕ ЗДОРОВЬЕ                                              #}
+    {# ============================================================ #}
+    <div class="ps-health">
+        <div class="ps-kpi accent">
+            <div class="lbl">Парсеров активно</div>
+            <div class="val">{{ health.parsers_online }}<span style="font-size:16px;color:var(--ps-muted)"> / {{ health.parsers_total }}</span></div>
+            <div class="sub">источников в работе</div>
+        </div>
+        <div class="ps-kpi {{ health.kp_fresh_class }}">
+            <div class="lbl">Кинопоиск — свежесть</div>
+            <div class="val">{{ health.kp_fresh_pct|floatformat:0 }}%</div>
+            <div class="sub">актуальны (&lt; {{ health.kp_ttl_days }} дн.)</div>
+        </div>
+        <div class="ps-kpi {{ health.ru_class }}">
+            <div class="lbl">Vavada — охват премьер</div>
+            <div class="val">{{ health.ru_pct|floatformat:0 }}%</div>
+            <div class="sub">{{ health.ru_parsed|intcomma }} из {{ health.ru_total|intcomma }}</div>
+        </div>
+        <div class="ps-kpi {{ health.uz_class }}">
+            <div class="lbl">Yangi.tv — плееры</div>
+            <div class="val">{{ health.uz_pct|floatformat:0 }}%</div>
+            <div class="sub">{{ health.uz_parsed|intcomma }} из {{ health.uz_total|intcomma }}</div>
+        </div>
+        <div class="ps-kpi">
+            <div class="lbl">Спарсено за сутки</div>
+            <div class="val">{{ health.parsed_24h|intcomma }}</div>
+            <div class="sub">по всем источникам</div>
+        </div>
+        <div class="ps-kpi {% if health.stuck_total %}bad{% endif %}">
+            <div class="lbl">Застряло / ошибок</div>
+            <div class="val">{{ health.stuck_total|intcomma }}</div>
+            <div class="sub">in_progress зависшие + failed</div>
+        </div>
+    </div>
 
-            {% if src.scope_note %}
-            <div style="background: rgba(110,195,224,0.10); border-left: 3px solid var(--accent); padding: 8px 12px; margin-bottom: 12px; font-size: 12px; color: var(--card-fg); border-radius: 4px;">
-                ℹ️ Скоуп: {{ src.scope_note }}
+    {# ============================================================ #}
+    {#  КАРТОЧКИ ПАРСЕРОВ                                           #}
+    {# ============================================================ #}
+    <div class="ps-cards">
+
+        {# -------- KINOPOISK + VAVADA (одна сетка) -------- #}
+        {% for s in srcs %}
+        <div class="ps-card">
+            <div class="ps-card-head">
+                <div class="ico">{{ s.icon }}</div>
+                <div class="ttl">{{ s.title }}<small>{{ s.subtitle }}</small></div>
+                <span class="health-pill {{ s.health_class }}">{{ s.health_label }}</span>
             </div>
-            {% endif %}
+            <div class="ps-card-body">
 
-            <div class="cycle-summary">
-                <div class="big-number">{{ src.full_cycles_completed }}</div>
-                <div class="label-main">полных циклов завершено</div>
-                <div class="label-sub">макс на одной записи: {{ src.max_cycle }}</div>
-            </div>
+                {% if s.scope_note %}
+                <div class="ps-scope">{{ s.scope_note }}</div>
+                {% endif %}
 
-            <h3>Прогресс циклов сейчас</h3>
-            {% for c in src.cycles_breakdown %}
-            <div class="cycle-row">
-                <div class="cycle-label">
-                    {% if c.cycle == 0 %}не парс.{% else %}{{ c.cycle }} цикл{% endif %}
+                {# крупные KPI-плитки #}
+                <div class="ps-tiles">
+                    <div class="ps-tile ok">
+                        <div class="t-lbl">Охват базы</div>
+                        <div class="t-val">{{ s.coverage_pct|floatformat:1 }}%</div>
+                        <div class="t-sub">{{ s.parsed|intcomma }} из {{ s.total|intcomma }}</div>
+                    </div>
+                    <div class="ps-tile warn">
+                        <div class="t-lbl">В очереди</div>
+                        <div class="t-val">{{ s.remaining|intcomma }}</div>
+                        <div class="t-sub">ждут парсинга</div>
+                    </div>
+                    <div class="ps-tile">
+                        <div class="t-lbl">Скорость / сутки</div>
+                        <div class="t-val">{{ s.per_day|intcomma }}</div>
+                        <div class="t-sub">фильмов спарсено</div>
+                    </div>
+                    <div class="ps-tile">
+                        <div class="t-lbl">ETA очереди</div>
+                        <div class="t-val">{% if s.eta_days != None %}{{ s.eta_days }}<span style="font-size:12px;color:var(--ps-muted)"> дн</span>{% else %}—{% endif %}</div>
+                        <div class="t-sub">{% if s.eta_days != None %}при текущем темпе{% else %}нет данных{% endif %}</div>
+                    </div>
                 </div>
-                <div class="cycle-bar-bg">
-                    <div class="cycle-bar-fg cycle-{% if c.cycle <= 4 %}{{ c.cycle }}{% else %}4{% endif %}" style="width: {{ c.pct|floatformat:1 }}%;"></div>
-                    <div class="cycle-bar-text">{{ c.count|intcomma }} ({{ c.pct|floatformat:1 }}%)</div>
+
+                {# статус-бар parsed / in_progress / not_parsed #}
+                <div class="ps-statusbar">
+                    <div class="bar-top">
+                        <span class="bar-title">Состояние сейчас</span>
+                        <span class="bar-pct">{{ s.parsed_now_pct|floatformat:1 }}% готово</span>
+                    </div>
+                    <div class="ps-track">
+                        <span class="ps-seg-ok"   style="width: {{ s.parsed_now_pct|floatformat:2 }}%"></span>
+                        <span class="ps-seg-warn" style="width: {{ s.in_progress_pct|floatformat:2 }}%"></span>
+                        <span class="ps-seg-idle" style="width: {{ s.not_parsed_pct|floatformat:2 }}%"></span>
+                    </div>
+                    <div class="ps-legend">
+                        <span class="lg"><span class="sw ok"></span>готово <span class="n">{{ s.parsed_now|intcomma }}</span></span>
+                        <span class="lg"><span class="sw warn"></span>в работе <span class="n">{{ s.in_progress|intcomma }}</span></span>
+                        <span class="lg"><span class="sw idle"></span>не начато <span class="n">{{ s.not_parsed|intcomma }}</span></span>
+                    </div>
                 </div>
-            </div>
-            {% endfor %}
 
-            <div class="speed-block">
-                <div class="speed-block-title">⚡ Скорость парсинга</div>
-                <div class="speed-row"><span>За час:</span><span class="num">{{ src.parsed_per_hour|intcomma }}</span></div>
-                <div class="speed-row"><span>За сутки:</span><span class="num">{{ src.parsed_per_day|intcomma }}</span></div>
-                <div class="speed-row"><span>За неделю:</span><span class="num">{{ src.parsed_per_week|intcomma }}</span></div>
-                <div class="speed-row divider">
-                    <span>За 30 дней:</span>
-                    <span class="num">{% for a in src.activity %}{% if a.label == "за 30 дней" %}{{ a.count|intcomma }}{% endif %}{% endfor %}</span>
+                {# скорость по периодам #}
+                <div class="ps-speed">
+                    {% for a in s.activity %}
+                    <div class="sp">
+                        <div class="num">{{ a.count|intcomma }}</div>
+                        <div class="cap">{{ a.label }}</div>
+                    </div>
+                    {% endfor %}
                 </div>
+
+                {# ETA-баннер #}
+                {% if s.remaining == 0 %}
+                <div class="ps-eta done">
+                    <span class="em">✅</span>
+                    <span>Очередь пуста — весь скоуп пройден. Идёт штатный перепарс по TTL {{ s.reparse_ttl_days }} дн.</span>
+                </div>
+                {% elif s.eta_days != None %}
+                <div class="ps-eta">
+                    <span class="em">⏱</span>
+                    <span>Осталось <strong>{{ s.remaining|intcomma }}</strong> — при темпе {{ s.per_day|intcomma }}/сут текущий проход завершится за <strong>≈ {{ s.eta_days }} дн.</strong></span>
+                </div>
+                {% else %}
+                <div class="ps-eta">
+                    <span class="em">⏸</span>
+                    <span>Осталось <strong>{{ s.remaining|intcomma }}</strong>, но за сутки спарсено 0 — парсер стоит или ждёт.</span>
+                </div>
+                {% endif %}
+
+                {# метки времени #}
+                <div class="ps-meta">
+                    <span>Свежесть (&lt; {{ s.reparse_ttl_days }} дн.): <b>{{ s.fresh|intcomma }}</b> ({{ s.fresh_pct|floatformat:0 }}%)</span>
+                    <span>Последний парс: <b>{{ s.newest_parse|date:"d.m H:i"|default:"—" }}</b></span>
+                    <span>Самый давний: <b>{{ s.oldest_parse|date:"d.m H:i"|default:"—" }}</b></span>
+                </div>
+
+                {# глубина перепарса — свёрнуто, опционально #}
+                {% if s.depth_breakdown %}
+                <details class="ps-depth">
+                    <summary>Глубина перепарса (сколько раз парсился каждый фильм)</summary>
+                    <div class="hint">
+                        Из-за регулярного обновления (TTL {{ s.reparse_ttl_days }} дн.) фильмы парсятся повторно.
+                        Тут видно, сколько фильмов прошло 1, 2, 3… проходов. Это <b>не</b> «циклы базы», а глубина обновления отдельных записей.
+                    </div>
+                    {% for d in s.depth_breakdown %}
+                    <div class="ps-drow">
+                        <span class="d-lbl">{% if d.times == 0 %}не парсился{% else %}{{ d.times }}× парс{% endif %}</span>
+                        <span class="d-bg">
+                            <span class="d-fg" style="width: {{ d.pct|floatformat:1 }}%"></span>
+                            <span class="d-txt">{{ d.count|intcomma }} · {{ d.pct|floatformat:1 }}%</span>
+                        </span>
+                    </div>
+                    {% endfor %}
+                </details>
+                {% endif %}
+
             </div>
-
-            {% if src.eta_days %}
-            <div class="eta-row">
-                🎯 До цикла №{{ src.next_cycle }} осталось:
-                <strong>{{ src.remaining_to_next_cycle|intcomma }}</strong> фильмов
-                <br>
-                При текущей скорости ≈ <strong>{{ src.eta_days }} дн.</strong>
-            </div>
-            {% endif %}
-
-            <h3>Текущие статусы</h3>
-            <table>
-                <tr><td class="label">Всего записей</td><td class="value">{{ src.total|intcomma }}</td></tr>
-                <tr><td class="label">Хоть раз парсилось</td><td class="value">{{ src.ever_parsed|intcomma }} ({{ src.ever_parsed_pct|floatformat:1 }}%)</td></tr>
-                <tr><td class="label">Никогда не парсилось</td><td class="value">{{ src.never_parsed|intcomma }} ({{ src.never_parsed_pct|floatformat:1 }}%)</td></tr>
-                <tr><td class="label">not_parsed</td><td class="value">{{ src.not_parsed|intcomma }}</td></tr>
-                <tr><td class="label">in_progress</td><td class="value">{{ src.in_progress|intcomma }}</td></tr>
-                <tr><td class="label">parsed</td><td class="value">{{ src.parsed_now|intcomma }}</td></tr>
-            </table>
-
-            <h3>Временные метки</h3>
-            <table>
-                <tr><td class="label">Самый давний парсинг</td><td class="value">{{ src.oldest_parse|date:"Y-m-d H:i"|default:"—" }}</td></tr>
-                <tr><td class="label">Самый свежий парсинг</td><td class="value">{{ src.newest_parse|date:"Y-m-d H:i"|default:"—" }}</td></tr>
-            </table>
         </div>
         {% endfor %}
-    </div>
 
-    {# === Refresh сериалов === #}
-    {% with sr=serial_refresh %}
-    <div class="parser-card" style="margin-bottom: 24px;">
-        <h2>🔄 Обновление сериалов (vavada_serials)</h2>
+        {# ============================================================ #}
+        {#  YANGI.TV — ПАЙПЛАЙН                                        #}
+        {# ============================================================ #}
+        {% with yt=yangitv %}
+        <div class="ps-card span-2">
+            <div class="ps-card-head">
+                <div class="ico">🇺🇿</div>
+                <div class="ttl">Yangi.tv <small>узбекский контент · пайплайн из 4 стадий</small></div>
+                <span class="health-pill {{ yt.health_class }}">{{ yt.health_label }}</span>
+            </div>
+            <div class="ps-card-body">
 
-        <div style="background: rgba(110,195,224,0.10); border-left: 3px solid var(--accent); padding: 8px 12px; margin-bottom: 16px; font-size: 12px; color: var(--card-fg); border-radius: 4px;">
-            ℹ️ Лёгкий refresh-парсер: для сериалов с уже найденным <code>film_content</code>
-            в окне последних {{ sr.year_window }} лет, чтобы видеть новые сезоны/эпизоды.
-            Цикл обновления — каждые {{ sr.refresh_days }} дней.
-        </div>
-
-        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 16px;">
-            <div style="text-align: center; padding: 14px; background: rgba(127,127,127,0.08); border-radius: 6px;">
-                <div class="big-number" style="font-size: 28px;">{{ sr.total|intcomma }}</div>
-                <div style="color: var(--card-muted); font-size: 12px;">всего сериалов</div>
-            </div>
-            <div style="text-align: center; padding: 14px; background: rgba(92,184,92,0.10); border-radius: 6px;">
-                <div class="big-number" style="font-size: 28px; color: #5cb85c;">{{ sr.fresh|intcomma }}</div>
-                <div style="color: var(--card-muted); font-size: 12px;">свежие ({{ sr.fresh_pct|floatformat:1 }}%)</div>
-                <div style="color: var(--card-muted); font-size: 10px;">обновлены за {{ sr.refresh_days }} дн.</div>
-            </div>
-            <div style="text-align: center; padding: 14px; background: rgba(240,173,78,0.12); border-radius: 6px;">
-                <div class="big-number" style="font-size: 28px; color: #f0ad4e;">{{ sr.waiting|intcomma }}</div>
-                <div style="color: var(--card-muted); font-size: 12px;">ждут обновления</div>
-                <div style="color: var(--card-muted); font-size: 10px;">last_update &gt; {{ sr.refresh_days }} дн.</div>
-            </div>
-            <div style="text-align: center; padding: 14px; background: rgba(110,195,224,0.10); border-radius: 6px;">
-                <div class="big-number" style="font-size: 28px;">{{ sr.per_day|intcomma }}</div>
-                <div style="color: var(--card-muted); font-size: 12px;">обновлено за сутки</div>
-                {% if sr.eta_days %}
-                <div style="color: var(--card-muted); font-size: 10px;">очистка очереди ≈ {{ sr.eta_days }} дн.</div>
-                {% endif %}
-            </div>
-        </div>
-
-        <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;">
-            {% for a in sr.activity %}
-            <div style="text-align: center; padding: 10px; background: rgba(127,127,127,0.06); border-radius: 4px;">
-                <div style="font-family: ui-monospace, monospace; font-weight: bold; font-size: 16px; color: var(--accent);">
-                    {{ a.count|intcomma }}
+                <div class="ps-scope">
+                    Поток данных: API yangi.tv → собираем ID → связываем с базой KP по названию/году →
+                    расшифровываем ссылки плеера (AES) → отдельно обновляем сериалы.
+                    {% if yt.last_collect %}Последний сбор ID: <b>{{ yt.last_collect|date:"d.m.Y H:i" }}</b>{% if yt.last_collect_message %} ({{ yt.last_collect_message }}){% endif %}.{% else %}Сбор ID ещё не запускался.{% endif %}
                 </div>
-                <div style="color: var(--card-muted); font-size: 11px; text-transform: uppercase;">{{ a.label }}</div>
+
+                <div class="ps-pipe">
+
+                    {# Стадия 1: Сбор ID #}
+                    <div class="ps-stage">
+                        <span class="st-no">1</span>
+                        <div class="st-name">Сбор ID</div>
+                        <div class="st-desc">Все content_id из API yangi.tv</div>
+                        <div class="st-big">{{ yt.collected_total|intcomma }}</div>
+                        <div class="st-bigcap">всего собрано</div>
+                        <div class="st-mini">
+                            <div class="st-row"><span>сериалов</span><span class="v">{{ yt.serials_total|intcomma }}</span></div>
+                            <div class="st-row"><span>обновлён</span><span class="v">{{ yt.last_collect|date:"d.m"|default:"—" }}</span></div>
+                        </div>
+                    </div>
+
+                    {# Стадия 2: Connect #}
+                    <div class="ps-stage">
+                        <span class="st-no">2</span>
+                        <div class="st-name">Connect</div>
+                        <div class="st-desc">Матч с базой KP по name_ru + году</div>
+                        <div class="st-big ok">{{ yt.connect_pct|floatformat:0 }}%</div>
+                        <div class="st-bigcap">{{ yt.connect_parsed|intcomma }} обработано</div>
+                        <div class="ps-ministack">
+                            <span class="ps-seg-ok"   style="width: {{ yt.connect_pct|floatformat:2 }}%"></span>
+                            <span class="ps-seg-warn" style="width: {{ yt.connect_in_progress_pct|floatformat:2 }}%"></span>
+                            <span class="ps-seg-bad"  style="width: {{ yt.connect_failed_pct|floatformat:2 }}%"></span>
+                            <span class="ps-seg-idle" style="width: {{ yt.connect_not_parsed_pct|floatformat:2 }}%"></span>
+                        </div>
+                        <div class="st-mini">
+                            <div class="st-row"><span>в очереди</span><span class="v warn">{{ yt.connect_not_parsed|intcomma }}</span></div>
+                            <div class="st-row"><span>в работе</span><span class="v">{{ yt.connect_in_progress|intcomma }}</span></div>
+                            <div class="st-row"><span>failed</span><span class="v {% if yt.connect_failed %}bad{% endif %}">{{ yt.connect_failed|intcomma }}</span></div>
+                            <div class="st-row"><span>/сут · ETA</span><span class="v">{{ yt.connect_per_day|intcomma }}{% if yt.connect_eta_days != None %} · {{ yt.connect_eta_days }}д{% endif %}</span></div>
+                        </div>
+                    </div>
+
+                    {# Стадия 3: Player #}
+                    <div class="ps-stage">
+                        <span class="st-no">3</span>
+                        <div class="st-name">Player (URL)</div>
+                        <div class="st-desc">Расшифровка ссылок видео (AES-CBC)</div>
+                        <div class="st-big ok">{{ yt.player_pct|floatformat:0 }}%</div>
+                        <div class="st-bigcap">{{ yt.player_parsed|intcomma }} с плеером</div>
+                        <div class="ps-ministack">
+                            <span class="ps-seg-ok"   style="width: {{ yt.player_pct|floatformat:2 }}%"></span>
+                            <span class="ps-seg-warn" style="width: {{ yt.player_in_progress_pct|floatformat:2 }}%"></span>
+                            <span class="ps-seg-bad"  style="width: {{ yt.player_failed_pct|floatformat:2 }}%"></span>
+                            <span class="ps-seg-idle" style="width: {{ yt.player_not_parsed_pct|floatformat:2 }}%"></span>
+                        </div>
+                        <div class="st-mini">
+                            <div class="st-row"><span>в очереди</span><span class="v warn">{{ yt.player_queue|intcomma }}</span></div>
+                            <div class="st-row"><span>в работе</span><span class="v">{{ yt.player_in_progress|intcomma }}</span></div>
+                            <div class="st-row"><span>failed</span><span class="v {% if yt.player_failed %}bad{% endif %}">{{ yt.player_failed|intcomma }}</span></div>
+                            <div class="st-row"><span>/сут · ETA</span><span class="v">{{ yt.player_per_day|intcomma }}{% if yt.player_eta_days != None %} · {{ yt.player_eta_days }}д{% endif %}</span></div>
+                        </div>
+                    </div>
+
+                    {# Стадия 4: Сериалы #}
+                    <div class="ps-stage">
+                        <span class="st-no">4</span>
+                        <div class="st-name">Сериалы</div>
+                        <div class="st-desc">Перепарс новых серий каждые {{ yt.serial_refresh_days }} дн.</div>
+                        <div class="st-big">{{ yt.serials_parsed|intcomma }}</div>
+                        <div class="st-bigcap">сериалов с плеером</div>
+                        <div class="st-mini">
+                            <div class="st-row"><span>свежие</span><span class="v ok">{{ yt.serials_fresh|intcomma }}</span></div>
+                            <div class="st-row"><span>ждут refresh</span><span class="v warn">{{ yt.serials_waiting|intcomma }}</span></div>
+                            <div class="st-row"><span>связано в Content</span><span class="v">{{ yt.content_linked|intcomma }}</span></div>
+                        </div>
+                    </div>
+
+                </div>
+
+                {# итоговая строка по yangi.tv #}
+                <div class="ps-meta" style="margin-top:18px;">
+                    <span>Связано с базой (id_uz): <b>{{ yt.content_linked|intcomma }}</b></span>
+                    <span>Плееры готовы (film_content_uz): <b>{{ yt.player_parsed|intcomma }}</b></span>
+                    <span>Connect /сут: <b>{{ yt.connect_per_day|intcomma }}</b></span>
+                    <span>Player /сут: <b>{{ yt.player_per_day|intcomma }}</b></span>
+                </div>
+
             </div>
-            {% endfor %}
         </div>
+        {% endwith %}
+
     </div>
-    {% endwith %}
 
-    {# === Yangi.tv три фазы === #}
-    {% with yt=yangitv %}
-    <div class="parser-card" style="margin-bottom: 24px;">
-        <h2>🇺🇿 Yangi.tv — три фазы парсинга</h2>
-
-        <div style="background: rgba(110,195,224,0.10); border-left: 3px solid var(--accent); padding: 8px 12px; margin-bottom: 16px; font-size: 12px; color: var(--card-fg); border-radius: 4px;">
-            ℹ️ Поток: <strong>1) сбор ID</strong> → <strong>2) связь по name_ru/year</strong> → <strong>3) расшифровка URL плеера</strong>.
-            {% if yt.last_collect %}
-                Последний сбор: <strong>{{ yt.last_collect|date:"Y-m-d H:i" }}</strong> ({{ yt.last_collect_message }}).
+    {# ============================================================ #}
+    {#  ОПЕРАЦИОННОЕ ЗДОРОВЬЕ                                       #}
+    {# ============================================================ #}
+    <div class="ps-card span-2" style="margin-top:20px;">
+        <div class="ps-card-head">
+            <div class="ico">🩺</div>
+            <div class="ttl">Операционное здоровье<small>работают ли парсеры · тех. ошибки · Chrome · очереди</small></div>
+            {% if ops.chrome_errors_24h %}
+            <span class="health-pill bad">⚠ Chrome: {{ ops.chrome_errors_24h|intcomma }} ош/24ч</span>
+            {% elif ops.error_signatures %}
+            <span class="health-pill warn">есть ошибки</span>
             {% else %}
-                Сбор ID ещё не запускался.
+            <span class="health-pill ok">ошибок нет</span>
             {% endif %}
         </div>
+        <div class="ps-card-body">
 
-        {# Общая сводка #}
-        <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 20px;">
-            <div style="text-align: center; padding: 14px; background: rgba(127,127,127,0.08); border-radius: 6px;">
-                <div class="big-number" style="font-size: 28px;">{{ yt.total|intcomma }}</div>
-                <div style="color: var(--card-muted); font-size: 12px;">всего собранных ID</div>
-            </div>
-            <div style="text-align: center; padding: 14px; background: rgba(92,184,92,0.10); border-radius: 6px;">
-                <div class="big-number" style="font-size: 28px; color: #5cb85c;">{{ yt.content_linked|intcomma }}</div>
-                <div style="color: var(--card-muted); font-size: 12px;">связано с Content</div>
-                <div style="color: var(--card-muted); font-size: 10px;">id_uz заполнен</div>
-            </div>
-            <div style="text-align: center; padding: 14px; background: rgba(110,195,224,0.10); border-radius: 6px;">
-                <div class="big-number" style="font-size: 28px;">{{ yt.url_parsed|intcomma }}</div>
-                <div style="color: var(--card-muted); font-size: 12px;">URL расшифрованы</div>
-                <div style="color: var(--card-muted); font-size: 10px;">{{ yt.url_pct|floatformat:1 }}% от всех</div>
-            </div>
-        </div>
-
-        {# Двухколоночная разбивка по фазам #}
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-
-            {# Фаза 2: Connect #}
-            <div style="padding: 14px; background: rgba(127,127,127,0.06); border-radius: 6px; border-left: 3px solid #79aec8;">
-                <h3 style="margin-top: 0;">Фаза 2 — Connect (matching по name_ru/year)</h3>
-
-                <table>
-                    <tr><td class="label">not_parsed (ждут)</td><td class="value">{{ yt.connect_not_parsed|intcomma }}</td></tr>
-                    <tr><td class="label">in_progress (в работе)</td><td class="value">{{ yt.connect_in_progress|intcomma }}</td></tr>
-                    <tr><td class="label">parsed (готово)</td><td class="value">{{ yt.connect_parsed|intcomma }} ({{ yt.connect_pct|floatformat:1 }}%)</td></tr>
-                </table>
-
-                <div class="speed-block" style="margin-top: 10px;">
-                    <div class="speed-block-title">⚡ Скорость connect</div>
-                    {% for a in yt.connect_activity %}
-                    <div class="speed-row"><span>{{ a.label }}:</span><span class="num">{{ a.count|intcomma }}</span></div>
-                    {% endfor %}
+            {# статусы парсеров #}
+            <div class="ops-grid">
+                {% for p in ops.parsers %}
+                <div class="ops-cell">
+                    <div class="ops-cell-head">
+                        <span class="ops-ico">{{ p.icon }}</span>
+                        <span class="ops-name">{{ p.title }}</span>
+                        <span class="health-pill {{ p.status_class }}">{{ p.status }}</span>
+                    </div>
+                    <div class="ops-rows">
+                        {% if p.has_errors %}
+                        <div class="ops-row"><span>успех · ошибок (час)</span><span class="v"><span class="ok">{{ p.ok_1h|intcomma }}</span> · <span class="{% if p.err_1h %}bad{% endif %}">{{ p.err_1h|intcomma }}</span></span></div>
+                        <div class="ops-row"><span>за сутки</span><span class="v">{{ p.ok_24h|intcomma }} / {{ p.err_24h|intcomma }} ош</span></div>
+                        {% else %}
+                        <div class="ops-row"><span>спарсено (час · сутки)</span><span class="v">{{ p.ok_1h|intcomma }} · {{ p.ok_24h|intcomma }}</span></div>
+                        <div class="ops-row"><span>застряло (&gt;30 мин)</span><span class="v {% if p.stuck %}bad{% endif %}">{{ p.stuck|intcomma }}</span></div>
+                        {% endif %}
+                        <div class="ops-row"><span>последний успех</span><span class="v">{% if p.last_ok_age_min != None %}{{ p.last_ok_age_min }} мин назад{% else %}—{% endif %}</span></div>
+                        {% if p.chrome_issue %}
+                        <div class="ops-row"><span class="bad">⚠ Chrome не стартует</span><span class="v bad">{{ p.chrome_issue|intcomma }}</span></div>
+                        {% endif %}
+                    </div>
                 </div>
+                {% endfor %}
+            </div>
 
-                {% if yt.connect_eta_days %}
-                <div class="eta-row" style="margin-top: 8px;">
-                    🎯 До завершения connect:
-                    <strong>{{ yt.connect_not_parsed|intcomma }}</strong> ID
-                    <br>При текущей скорости ≈ <strong>{{ yt.connect_eta_days }} дн.</strong>
+            {# технические ошибки за 24ч #}
+            {% if ops.error_signatures %}
+            <div class="ops-block-title">Технические ошибки за 24 часа</div>
+            <div class="ops-sigs">
+                {% for s in ops.error_signatures %}
+                <span class="ops-sig {% if s.label == 'Chrome не стартует' %}bad{% else %}warn{% endif %}">{{ s.label }} <b>{{ s.count|intcomma }}</b></span>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="ops-ok">✅ Технических ошибок за сутки не зафиксировано.</div>
+            {% endif %}
+
+            {# Chrome-процессы + очереди #}
+            <div class="ops-two">
+                {% if ops.chrome %}
+                <div>
+                    <div class="ops-block-title">Chrome-процессы воркеров</div>
+                    <div class="ops-chips">
+                        {% for c in ops.chrome %}
+                        <div class="ops-chip {{ c.cls }}">
+                            <div class="ops-chip-top">{{ c.label }}</div>
+                            <div class="ops-chip-num">{{ c.count|intcomma }}</div>
+                            <div class="ops-chip-sub">{{ c.age_sec }}с назад</div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    <div class="ops-hint">Норма ~6–40 процессов. ≥300 — вероятна течь Chrome (упор в pids_limit, vavada встаёт). Хартбит &gt;10 мин назад — воркер мог зависнуть.</div>
+                </div>
+                {% else %}
+                <div>
+                    <div class="ops-block-title">Chrome-процессы воркеров</div>
+                    <div class="ops-hint">Нет данных хартбита (воркеры ещё не отчитались или Redis недоступен).</div>
+                </div>
+                {% endif %}
+                {% if ops.queues %}
+                <div>
+                    <div class="ops-block-title">Очереди задач</div>
+                    <div class="ops-chips">
+                        {% for q in ops.queues %}
+                        <div class="ops-chip">
+                            <div class="ops-chip-top">{{ q.label }}</div>
+                            <div class="ops-chip-num">{{ q.depth|intcomma }}</div>
+                            <div class="ops-chip-sub">в очереди</div>
+                        </div>
+                        {% endfor %}
+                    </div>
                 </div>
                 {% endif %}
             </div>
 
-            {# Фаза 3: Movie URLs #}
-            <div style="padding: 14px; background: rgba(127,127,127,0.06); border-radius: 6px; border-left: 3px solid #5cb85c;">
-                <h3 style="margin-top: 0;">Фаза 3 — Movie URLs (AES-дешифрация)</h3>
-
-                <table>
-                    <tr><td class="label">not_parsed (ждут)</td><td class="value">{{ yt.url_not_parsed|intcomma }}</td></tr>
-                    <tr><td class="label">in_progress (в работе)</td><td class="value">{{ yt.url_in_progress|intcomma }}</td></tr>
-                    <tr><td class="label">parsed (готово)</td><td class="value">{{ yt.url_parsed|intcomma }} ({{ yt.url_pct|floatformat:1 }}%)</td></tr>
-                </table>
-
-                <div class="speed-block" style="margin-top: 10px;">
-                    <div class="speed-block-title">⚡ Скорость URLs</div>
-                    {% for a in yt.url_activity %}
-                    <div class="speed-row"><span>{{ a.label }}:</span><span class="num">{{ a.count|intcomma }}</span></div>
-                    {% endfor %}
-                </div>
-
-                {% if yt.url_eta_days %}
-                <div class="eta-row" style="margin-top: 8px;">
-                    🎯 До завершения URLs:
-                    <strong>{{ yt.url_not_parsed|intcomma }}</strong> фильмов
-                    <br>При текущей скорости ≈ <strong>{{ yt.url_eta_days }} дн.</strong>
-                </div>
-                {% endif %}
-            </div>
         </div>
     </div>
-    {% endwith %}
 
-    <div class="bottom-nav">
-        <a href="/admin/">← Назад в админку</a>
-        |
+    <div class="ps-foot">
+        <a href="/admin/">← В админку</a>
         <a href="javascript:location.reload()">🔄 Обновить</a>
     </div>
-</div>
 
+</div>
+{% endlocalize %}
 {% endblock %}

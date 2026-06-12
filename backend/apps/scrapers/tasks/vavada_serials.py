@@ -31,7 +31,12 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 
 from ..models import Content, ScraperLog
-from .vavada import create_driver, quit_driver, get_chrome_count
+from .vavada import (
+    create_driver,
+    quit_driver,
+    get_chrome_count,
+    report_chrome_heartbeat,
+)
 
 
 logger = logging.getLogger("vavada_serials")
@@ -353,3 +358,4 @@ def parse_vavada_serial(self, kp_id):
     finally:
         if driver:
             quit_driver(driver)
+        report_chrome_heartbeat("vavada_serials")

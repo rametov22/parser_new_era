@@ -39,6 +39,36 @@ def get_chrome_count():
     )
 
 
+def report_chrome_heartbeat(label):
+    """
+    Пишет в Redis число живых Chrome-процессов воркера + метку времени —
+    для операционного дашборда. Дашборд (backend-контейнер) не видит процессы
+    воркеров через psutil, поэтому каждый воркер отчитывается сам.
+
+    Полностью защищено: любые ошибки глотаются, парсинг не роняется.
+    Ключ chrome_health:<label> живёт 1ч; устаревший ключ = воркер встал.
+    """
+    try:
+        import json
+        import redis
+
+        r = redis.Redis(
+            host=settings.REDIS_HOST,
+            port=int(settings.REDIS_PORT),
+            password=settings.REDIS_PASSWORD,
+            decode_responses=True,
+        )
+        r.set(
+            f"chrome_health:{label}",
+            json.dumps(
+                {"chrome": get_chrome_count(), "ts": timezone.now().isoformat()}
+            ),
+            ex=3600,
+        )
+    except Exception:
+        pass
+
+
 def _kill_zombie_chrome():
     """Убивает осиротевшие chromedriver/chrome процессы (PPID=1 = zombie)."""
     for proc in psutil.process_iter(["pid", "ppid", "name"]):
@@ -432,3 +462,4 @@ def parse_single_iframe(self, kp_id):
     finally:
         if driver:
             quit_driver(driver)
+        report_chrome_heartbeat("vavada")

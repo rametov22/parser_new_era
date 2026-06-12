@@ -320,4 +320,14 @@ class Migration(migrations.Migration):
             name='parsing_status',
             field=models.CharField(choices=[('not_parsed', 'Not parsed'), ('in_progress', 'In Progress'), ('parsed', 'Parsed'), ('failed', 'Failed (too many attempts)')], default='not_parsed', max_length=20),
         ),
+        migrations.AddField(
+            model_name='ytconnectcontent',
+            name='yt_name',
+            field=models.CharField(blank=True, max_length=255, null=True),
+        ),
+        migrations.AddField(
+            model_name='ytconnectcontent',
+            name='yt_year',
+            field=models.IntegerField(blank=True, null=True),
+        ),
     ]

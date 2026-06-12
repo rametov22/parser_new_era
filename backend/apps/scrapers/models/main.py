@@ -36,6 +36,11 @@ class YtConnectContent(models.Model):
     connect_fail_count = models.PositiveSmallIntegerField(default=0)
     player_fail_count = models.PositiveSmallIntegerField(default=0)
 
+    # Кэш данных yangi.tv (getContentDetail), чтобы повторный матч с Content
+    # делать локально, без лишних запросов к API при relink.
+    yt_name = models.CharField(max_length=255, null=True, blank=True)
+    yt_year = models.IntegerField(null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

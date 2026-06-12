@@ -574,7 +574,10 @@ def parse_yt_connect(self, content_id):
                 Content.objects.filter(pk=content_original.pk).update(**extra)
 
         YtConnectContent.objects.filter(content_id=content_id).update(
-            parsing_status="parsed", updated_at=timezone.now()
+            parsing_status="parsed",
+            yt_name=name_ru or "",
+            yt_year=year,
+            updated_at=timezone.now(),
         )
         ScraperLog.objects.create(
             task_name=task_name,
@@ -757,10 +760,11 @@ def retry_yt_failed():
          Даём свежие MAX_FAIL_ATTEMPTS попыток — часть сбоев временные
          (моргнул API, "no urls decoded" в тот момент и т.п.).
 
-      2. player='parsed', но не попавшие в Content (нет матча по имени+году) →
-         сбрасываем connect в not_parsed, чтобы пересматчить. По мере того как
-         KP-сторона дозаполняет name_ru, матч находится, и уже готовый
-         content_url копируется в film_content_uz (см. parse_yt_connect).
+      2. player='parsed', но не попавшие в Content → матчим ЛОКАЛЬНО по кэшу
+         yt_name/yt_year (без запроса к API) и сбрасываем connect в not_parsed
+         только тем, у кого матч уже нашёлся (KP-сторона дозаполнила name_ru).
+         Тогда connect один раз сходит в API и свяжет, скопировав content_url
+         в film_content_uz. Несвязанные без матча API не дёргают.
 
     Темп задают существующие диспетчеры с их rate_limit=6/m — здесь только
     переводим статусы, фактический перепарс идёт штатным путём.
@@ -775,18 +779,35 @@ def retry_yt_failed():
         parsing_status_player="failed"
     ).update(parsing_status_player="not_parsed", player_fail_count=0, updated_at=now)
 
-    # «player есть, но не связано»: player спарсен, но ни один Content с этим
-    # id_uz не имеет заполненного film_content_uz → пересматчиваем connect.
+    # «player есть, но не связано»: player спарсен, но в Content не попал.
+    # Чтобы не дёргать API для всех каждый цикл — матчим ЛОКАЛЬНО по кэшу
+    # yt_name/yt_year и переводим в not_parsed (→ перепарс через API) только:
+    #   - у кого матч НАШЁЛСЯ локально (KP-сторона дозаполнилась) — connect свяжет;
+    #   - у кого кэша имени ещё нет (старые записи) — один раз сходить за деталями.
+    # Несвязанные без локального матча API не трогают вообще.
     linked_filled = set(
         Content.objects.exclude(id_uz__isnull=True)
         .exclude(film_content_uz={})
         .exclude(film_content_uz__isnull=True)
         .values_list("id_uz", flat=True)
     )
-    relink = (
+    unlinked = (
         YtConnectContent.objects.filter(parsing_status_player="parsed")
         .exclude(content_id__in=linked_filled)
-        .update(parsing_status="not_parsed", updated_at=now)
+        .only("content_id", "yt_name", "yt_year")
+    )
+    relink_ids = []
+    for y in unlinked.iterator():
+        if not y.yt_name:
+            relink_ids.append(y.content_id)  # кэша ещё нет → один раз сходить в API
+            continue
+        if y.yt_year is None:
+            continue  # без года матч ненадёжен — API не дёргаем
+        content, _strategy = _match_content(y.yt_name, y.yt_year, y.content_id)
+        if content:
+            relink_ids.append(y.content_id)  # локально найден матч → connect свяжет
+    relink = YtConnectContent.objects.filter(content_id__in=relink_ids).update(
+        parsing_status="not_parsed", updated_at=now
     )
 
     logger.info(

@@ -58,6 +58,11 @@ YT_AES_IV = bytes.fromhex(
 CONNECT_BATCH = 20
 MOVIE_URL_BATCH = 20
 
+# Обновление сериалов: перепарс уже спарсенных сериалов, чтобы подхватить
+# новые серии. Окно — не чаще раза в N дней.
+SERIAL_REFRESH_DAYS = 2
+SERIAL_REFRESH_BATCH = 100
+
 # Тайминги — щадящий режим, не торопимся
 HTTP_TIMEOUT = 60  # на медленные ответы API
 PAGE_SLEEP = 5  # пауза между страницами в collect_all_ids
@@ -554,10 +559,7 @@ def parse_yt_connect(self, content_id):
                     or content_original.film_content_uz == {}
                 )
             ):
-                extra = {
-                    "film_content_uz": existing_yt.content_url,
-                    "add_content_date_uz": timezone.now().date(),
-                }
+                extra = {"film_content_uz": existing_yt.content_url}
                 if existing_yt.is_serial and isinstance(existing_yt.content_url, dict):
                     try:
                         seasons = sorted(existing_yt.content_url.keys(), key=int)
@@ -572,6 +574,9 @@ def parse_yt_connect(self, content_id):
                     except (ValueError, TypeError):
                         pass
                 Content.objects.filter(pk=content_original.pk).update(**extra)
+                Content.objects.filter(
+                    pk=content_original.pk, add_content_date_uz__isnull=True
+                ).update(add_content_date_uz=timezone.now().date())
 
         YtConnectContent.objects.filter(content_id=content_id).update(
             parsing_status="parsed",
@@ -679,10 +684,7 @@ def parse_yt_movie_url(self, content_id):
         )
 
         # Копируем в Content. Для сериала ещё last_season_uz / last_episode_uz.
-        content_update = {
-            "film_content_uz": urls,
-            "add_content_date_uz": timezone.now().date(),
-        }
+        content_update = {"film_content_uz": urls}
         if is_serial and urls:
             try:
                 seasons = sorted(urls.keys(), key=int)
@@ -696,6 +698,11 @@ def parse_yt_movie_url(self, content_id):
                 pass
 
         Content.objects.filter(id_uz=content_id).update(**content_update)
+        # Дату ставим только при ПЕРВОМ появлении плеера, чтобы перепарс
+        # сериалов (refresh каждые N дней) её не сбрасывал на сегодня.
+        Content.objects.filter(
+            id_uz=content_id, add_content_date_uz__isnull=True
+        ).update(add_content_date_uz=timezone.now().date())
 
         summary = (
             f"серий: {sum(len(v) for v in urls.values())}, сезонов: {len(urls)}"
@@ -717,6 +724,49 @@ def parse_yt_movie_url(self, content_id):
         except self.MaxRetriesExceededError:
             logger.error(f"☠️ movie-url retries исчерпаны для {content_id}")
             raise
+
+
+# ============================================================
+# 3b. SERIAL REFRESH — обновление уже спарсенных сериалов
+# ============================================================
+@shared_task(queue="default")
+def spawn_yt_serial_refresh():
+    """
+    Диспетчер обновления сериалов yangi.tv.
+
+    Отдельный парс не нужен: parse_yt_movie_url заново тянет getMovieUrl со
+    всеми сезонами/сериями и обновляет content_url / film_content_uz /
+    last_season_uz / last_episode_uz. Здесь только периодически возвращаем в
+    очередь уже спарсенные сериалы, давно не обновлявшиеся.
+
+    Кандидаты: is_serial=True, parsing_status_player='parsed',
+    updated_at старше SERIAL_REFRESH_DAYS. updated_at двигаем атомарно,
+    чтобы повторный тик не схватил те же.
+    """
+    cutoff = timezone.now() - timedelta(days=SERIAL_REFRESH_DAYS)
+    candidates = list(
+        YtConnectContent.objects.filter(
+            is_serial=True,
+            parsing_status_player="parsed",
+            updated_at__lt=cutoff,
+        )
+        .order_by("updated_at")
+        .values_list("content_id", flat=True)[:SERIAL_REFRESH_BATCH]
+    )
+    if not candidates:
+        logger.info("[yt-serial-refresh] нет кандидатов")
+        return 0
+
+    # Двигаем updated_at, чтобы следующий тик не подхватил эти же сериалы
+    # (parse_yt_movie_url по успеху снова обновит updated_at на now).
+    YtConnectContent.objects.filter(content_id__in=candidates).update(
+        updated_at=timezone.now()
+    )
+    for content_id in candidates:
+        parse_yt_movie_url.delay(content_id)
+
+    logger.info(f"[yt-serial-refresh] поставлено в очередь: {len(candidates)}")
+    return len(candidates)
 
 
 # ============================================================

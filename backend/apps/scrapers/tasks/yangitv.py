@@ -23,6 +23,7 @@ import logging
 import re
 import time
 from datetime import timedelta
+from itertools import zip_longest
 
 import requests
 from celery import shared_task
@@ -46,6 +47,10 @@ YT_BEARER_TOKEN = config(
     "YT_BEARER_TOKEN",
     default="414307|9GZiGExoNwcwAQkL7inXsWetcbpX0svd4Ygw93QNc995ccb1",
 )
+# Интеграция с основным backend Kmax: отдаём готовые id_uz new_releases,
+# если backend сам не может достучаться до Yangi.tv API (гео-блок).
+KMAX_INTERNAL_URL = config("KMAX_INTERNAL_URL", default="")
+KMAX_INTERNAL_TOKEN = config("KMAX_INTERNAL_TOKEN", default="")
 # AES-ключи извлечены из официального приложения yangi.tv (Frida)
 YT_AES_KEY = config(
     "YT_AES_KEY", default="op1PU19Y2JoWcj0CwKwgYTtKh8OlrR3O"
@@ -906,3 +911,83 @@ def get_movie_url():
         parsing_status_player="in_progress", updated_at=timezone.now()
     )
     return parse_yt_movie_url.run(candidate.content_id)
+
+
+# ============================================================
+# 6. KMAX INTEGRATION — обновление кеша uz new_releases в основном backend
+# ============================================================
+def _fetch_category_ids(category_id: int, page: int = 1) -> list[int]:
+    """Вспомогательный запрос getCategoryDetail для Kmax-интеграции."""
+    url = f"{YT_API_BASE}/getCategoryDetail"
+    try:
+        response = requests.get(
+            url,
+            params={"category_id": category_id, "page": page},
+            headers=_headers(),
+            timeout=HTTP_TIMEOUT,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if payload.get("code") != 200:
+            logger.warning(
+                "[kmax-yangi] category %s returned code %s: %s",
+                category_id,
+                payload.get("code"),
+                payload.get("message"),
+            )
+            return []
+        items = payload.get("data", {}).get("list", [])
+        return [int(item["id"]) for item in items if item.get("id")]
+    except Exception:
+        logger.exception("[kmax-yangi] failed to fetch category %s", category_id)
+        return []
+
+
+@shared_task(queue="default")
+def refresh_kmax_yangi_cache():
+    """
+    Запрашивает категории 1,2,4,5 Yangi.tv API (доступен из UZ), делает
+    round-robin и отправляет готовые списки id_uz в основной backend Kmax.
+
+    Актуально, когда backend Kmax стоит за гео-блоком (например, в KZ) и не
+    может сам обратиться к admin.yangi.tv.
+    """
+    if not KMAX_INTERNAL_URL or not KMAX_INTERNAL_TOKEN:
+        logger.info(
+            "[kmax-yangi-refresh] KMAX_INTERNAL_URL or KMAX_INTERNAL_TOKEN not configured, skipping"
+        )
+        return "skipped"
+
+    category_ids = (1, 2, 4, 5)
+    categories = {cid: _fetch_category_ids(cid) for cid in category_ids}
+
+    # Round-robin: по одному из каждой категории.
+    all_ids = []
+    for bucket in zip_longest(*categories.values()):
+        for value in bucket:
+            if value is not None:
+                all_ids.append(value)
+    home_ids = all_ids[:20]
+
+    url = f"{KMAX_INTERNAL_URL.rstrip('/')}/ru/api/v1/home/internal/yangi/refresh/"
+    try:
+        response = requests.post(
+            url,
+            json={"home": home_ids, "all": all_ids},
+            headers={
+                "Authorization": f"Bearer {KMAX_INTERNAL_TOKEN}",
+                "Content-Type": "application/json",
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        logger.info(
+            "[kmax-yangi-refresh] sent home=%s all=%s response=%s",
+            len(home_ids),
+            len(all_ids),
+            response.json(),
+        )
+        return response.json()
+    except Exception:
+        logger.exception("[kmax-yangi-refresh] failed to post to Kmax")
+        raise

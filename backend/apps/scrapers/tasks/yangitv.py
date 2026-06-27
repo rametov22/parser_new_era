@@ -969,6 +969,12 @@ def refresh_kmax_yangi_cache():
                 all_ids.append(value)
     home_ids = all_ids[:20]
 
+    if not all_ids:
+        logger.warning(
+            "[kmax-yangi-refresh] all categories are empty, skipping POST"
+        )
+        return {"home": 0, "all": 0, "skipped": True}
+
     url = f"{KMAX_INTERNAL_URL.rstrip('/')}/ru/api/v1/home/internal/yangi/refresh/"
     try:
         response = requests.post(

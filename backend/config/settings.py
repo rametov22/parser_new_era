@@ -167,10 +167,21 @@ CACHES = {
     }
 }
 
+from celery.schedules import crontab
+
 # CELERY SETTINGS
 CELERY_TIMEZONE = "Asia/Tashkent"
 CELERY_TASK_TRACK_STARTED = True
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
+
+CELERY_BEAT_SCHEDULE = {
+    # Kmax: пушим свежий round-robin new_releases из Yangi.tv (UZ → Kmax backend,
+    # который может стоять за гео-блоком). Каждые 6 часов — достаточно, TTL кеша ~25ч.
+    "refresh-kmax-yangi-cache": {
+        "task": "apps.scrapers.tasks.yangitv.refresh_kmax_yangi_cache",
+        "schedule": crontab(minute=0, hour="*/6"),
+    },
+}
 
 # URL брокера и бэкенда
 CELERY_BROKER_URL = f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/0"
@@ -194,6 +205,7 @@ CELERY_TASK_ROUTES = {
     "apps.scrapers.tasks.yangitv.spawn_yt_movie_urls": {"queue": "default"},
     "apps.scrapers.tasks.yangitv.parse_yt_movie_url": {"queue": "default"},
     "apps.scrapers.tasks.yangitv.expire_yt_stuck": {"queue": "default"},
+    "apps.scrapers.tasks.yangitv.refresh_kmax_yangi_cache": {"queue": "default"},
 }
 
 PREMIERE = config("premiere", cast=int, default=40)

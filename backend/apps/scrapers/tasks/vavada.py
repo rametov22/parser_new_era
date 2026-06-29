@@ -1,20 +1,21 @@
 import re
 import logging
-import psutil
 from django.conf import settings
 from celery import shared_task
 from django.utils import timezone
 from datetime import timedelta
 from django.db.models import Q
-from selenium.webdriver.chrome.service import Service
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
-from selenium_stealth import stealth
+from selenium.common.exceptions import TimeoutException
 from bs4 import BeautifulSoup
 
 from ..models import Content, ScraperLog
+from ..chrome_utils import (
+    create_chrome_driver,
+    quit_driver,
+    get_chrome_count,
+)
 
 
 logging.getLogger("selenium").setLevel(logging.WARNING)
@@ -28,15 +29,6 @@ formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s", "%H:%
 stream_handler = logging.StreamHandler()
 stream_handler.setFormatter(formatter)
 logger.addHandler(stream_handler)
-
-
-def get_chrome_count():
-    """Считает активные процессы Chrome для контроля ресурсов"""
-    return sum(
-        1
-        for proc in psutil.process_iter(["name"])
-        if proc.info["name"] and "chrome" in proc.info["name"].lower()
-    )
 
 
 def report_chrome_heartbeat(label):
@@ -65,84 +57,6 @@ def report_chrome_heartbeat(label):
             ),
             ex=3600,
         )
-    except Exception:
-        pass
-
-
-def _kill_zombie_chrome():
-    """Убивает осиротевшие chromedriver/chrome процессы (PPID=1 = zombie)."""
-    for proc in psutil.process_iter(["pid", "ppid", "name"]):
-        try:
-            name = (proc.info.get("name") or "").lower()
-            if "chromedriver" in name or "chrome" in name:
-                if proc.info.get("ppid") == 1:
-                    proc.kill()
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            continue
-
-
-def create_driver():
-    """Создаёт headless Chrome с максимальной маскировкой под реальный браузер."""
-    _kill_zombie_chrome()
-
-    options = Options()
-    options.binary_location = "/usr/bin/chromium"
-
-    options.add_argument("--headless=new")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--window-size=1920,1080")
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_argument("--disable-infobars")
-    options.add_argument("--lang=ru-RU")
-    options.add_argument(
-        "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/148.0.0.0 Safari/537.36"
-    )
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    options.add_experimental_option("useAutomationExtension", False)
-    options.add_experimental_option(
-        "prefs", {"intl.accept_languages": "ru,ru-RU,en-US,en"}
-    )
-
-    service = Service(executable_path="/usr/bin/chromedriver")
-    try:
-        driver = webdriver.Chrome(service=service, options=options)
-    except Exception:
-        # webdriver.Chrome упал, но Service уже запустил процесс chromedriver —
-        # без этого он осиротеет и будет копиться (утечка потоков/PID).
-        try:
-            service.stop()
-        except Exception:
-            pass
-        raise
-
-    try:
-        driver.set_page_load_timeout(45)
-        driver.set_script_timeout(30)
-
-        stealth(
-            driver,
-            languages=["ru-RU", "ru", "en-US", "en"],
-            vendor="Google Inc.",
-            platform="Win32",
-            webgl_vendor="Intel Inc.",
-            renderer="Intel Iris OpenGL Engine",
-            fix_hairline=True,
-        )
-    except Exception:
-        # Драйвер создан, но настройка упала — закрываем, иначе тоже утечёт.
-        quit_driver(driver)
-        raise
-
-    return driver
-
-
-def quit_driver(driver):
-    """Закрывает Chrome."""
-    try:
-        driver.quit()
     except Exception:
         pass
 
@@ -279,11 +193,32 @@ def parse_single_iframe(self, kp_id):
             is_parsed_ru="in_progress", parsed_at_ru=timezone.now()
         )
 
-        driver = create_driver()
+        driver = create_chrome_driver(stealth=True)
 
         # Логика из check_and_pars_iframe
         url = f"https://iframe.cloud/iframe/{kp_id}"
-        driver.get(url)
+        try:
+            driver.get(url)
+        except TimeoutException:
+            # Renderer завис при загрузке страницы. Пересоздаём драйвер
+            # и пробуем один раз — часто помогает при временной нагрузке.
+            logger.warning(
+                f"[vavada] {kp_id} | timeout загрузки страницы, пересоздаём драйвер"
+            )
+            quit_driver(driver)
+            driver = create_chrome_driver(stealth=True)
+            try:
+                driver.get(url)
+            except TimeoutException:
+                logger.warning(
+                    f"[vavada] {kp_id} | повторный timeout загрузки, пропускаем"
+                )
+                film.is_parsed_ru = "not_parsed"
+                film.last_update = (
+                    timezone.now() - timedelta(days=3, hours=20)
+                ).date()
+                film.save(update_fields=["is_parsed_ru", "last_update"])
+                return f"No player found for {kp_id} (page timeout)"
 
         # Ожидание фрейма
         wait = WebDriverWait(driver, 10)

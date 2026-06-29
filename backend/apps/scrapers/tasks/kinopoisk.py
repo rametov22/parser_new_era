@@ -3,14 +3,15 @@ import time
 import random
 import json
 import datetime as dt
-import psutil
-from selenium import webdriver
 from bs4 import BeautifulSoup
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
 from celery import shared_task
 from django.utils import timezone
 from .. import models
+from ..models import ScraperLog
+from ..chrome_utils import (
+    create_chrome_driver,
+    quit_driver,
+)
 from ..kinopoisk_scrap_codes import *
 from ..kinopoisk_scrap_saves import *
 from ..kinopoisk_scrap_utils import download_and_save_poster
@@ -22,70 +23,6 @@ additional_path_like = "like/"
 additional_path_awards = "awards/"
 additional_path_episodes = "episodes/"
 additional_path_other = "other/"
-
-
-def _kill_zombie_chrome():
-    """Убивает осиротевшие chromedriver/chrome процессы (PPID=1 = zombie)."""
-    for proc in psutil.process_iter(["pid", "ppid", "name"]):
-        try:
-            name = (proc.info.get("name") or "").lower()
-            if "chromedriver" in name or "chrome" in name:
-                if proc.info.get("ppid") == 1:
-                    proc.kill()
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            continue
-
-
-def create_driver():
-    """Создает драйвер, подключаясь к удаленному браузеру или локальному"""
-
-    _kill_zombie_chrome()
-
-    options = Options()
-    options.binary_location = "/usr/bin/chromium"
-
-    # options.add_argument(f"user-agent={random_user_agent}")
-    options.add_argument("--headless=new")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-
-    options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    options.add_experimental_option("useAutomationExtension", False)
-
-    service = Service(executable_path="/usr/bin/chromedriver")
-    try:
-        driver = webdriver.Chrome(service=service, options=options)
-    except Exception:
-        # webdriver.Chrome упал, но Service уже запустил chromedriver —
-        # без явной остановки он останется живым ребёнком воркера (ppid != 1),
-        # _kill_zombie_chrome его не тронет, и процессы копятся под pids_limit.
-        try:
-            service.stop()
-        except Exception:
-            pass
-        raise
-
-    try:
-        driver.set_page_load_timeout(45)
-        driver.set_script_timeout(30)
-
-        driver.execute_cdp_cmd(
-            "Page.addScriptToEvaluateOnNewDocument",
-            {
-                "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-            },
-        )
-    except Exception:
-        # Драйвер создан, но настройка упала — закрываем, иначе утечёт.
-        try:
-            driver.quit()
-        except Exception:
-            pass
-        raise
-
-    return driver
 
 
 def inject_cookies(driver, cookies):
@@ -120,7 +57,7 @@ def start_global_parsing():
     with open("/app/kinopoisk_cookies.json", "r") as f:
         cookies = json.load(f)
     # cache.set("kp_cookies", cookies, 86400)
-    driver = create_driver()
+    driver = create_chrome_driver(stealth=False)
     try:
         inject_cookies(driver, cookies)
         last_page = get_last_page_number(driver)
@@ -128,7 +65,7 @@ def start_global_parsing():
         for page in range(1, last_page + 1):
             parse_page_list_task.delay(page)
     finally:
-        driver.quit()
+        quit_driver(driver)
 
 
 @shared_task(bind=True, queue="kp_pages_queue")
@@ -136,7 +73,7 @@ def parse_page_list_task(self, page_number):
     with open("/app/kinopoisk_cookies.json", "r") as f:
         cookies = json.load(f)
 
-    driver = create_driver()
+    driver = create_chrome_driver(stealth=False)
 
     try:
         inject_cookies(driver, cookies)
@@ -169,8 +106,13 @@ def parse_page_list_task(self, page_number):
                     parse_single_film_task.delay(kp_id, href)
     except Exception as e:
         print(f"Ошибка на странице {page_number}: {e}")
+        ScraperLog.objects.create(
+            task_name=f"KP page {page_number}",
+            status="error",
+            message=str(e)[:500],
+        )
     finally:
-        driver.quit()
+        quit_driver(driver)
 
 
 @shared_task(
@@ -203,9 +145,15 @@ def parse_single_film_task(self, kp_id, href, cookies=None):
     driver = None
     try:
         try:
-            driver = create_driver()
+            driver = create_chrome_driver(stealth=False)
         except Exception as e:
-            print(f"Chrome не стартанул для {kp_id}: {type(e).__name__}: {e}")
+            error_msg = f"Chrome не стартанул для {kp_id}: {type(e).__name__}: {e}"
+            print(error_msg)
+            ScraperLog.objects.create(
+                task_name=f"KP film {kp_id}",
+                status="error",
+                message=str(e)[:500],
+            )
             models.Content.objects.filter(kino_poisk_id=kp_id).update(
                 is_parsed_kp="not_parsed"
             )
@@ -352,15 +300,17 @@ def parse_single_film_task(self, kp_id, href, cookies=None):
 
     except Exception as e:
         print(f"Ошибка в фильме {kp_id}, {e}")
+        ScraperLog.objects.create(
+            task_name=f"KP film {kp_id}",
+            status="error",
+            message=str(e)[:500],
+        )
         models.Content.objects.filter(kino_poisk_id=kp_id).update(
             is_parsed_kp="not_parsed"
         )
     finally:
         if driver:
-            try:
-                driver.quit()
-            except Exception:
-                pass
+            quit_driver(driver)
         from .vavada import report_chrome_heartbeat
 
         report_chrome_heartbeat("kp_films")

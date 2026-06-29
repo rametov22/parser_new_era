@@ -26,8 +26,8 @@ from django.conf import settings
 from django.utils import timezone
 
 from .. import models
+from ..chrome_utils import create_chrome_driver, quit_driver
 from .kinopoisk import (
-    create_driver,
     inject_cookies,
     get_last_page_number,
     parse_single_film_task,
@@ -83,7 +83,7 @@ def discover_task(self):
     with open(COOKIES_PATH, "r") as f:
         cookies = json.load(f)
 
-    driver = create_driver()
+    driver = create_chrome_driver(stealth=False)
     try:
         inject_cookies(driver, cookies)
 
@@ -147,8 +147,18 @@ def discover_task(self):
             f"новых фильмов: {new_films}, следующий курсор: {new_cursor}"
         )
 
+    except Exception as e:
+        print(f"[discover] Ошибка: {e}")
+        from ..models import ScraperLog
+
+        ScraperLog.objects.create(
+            task_name="KP discover",
+            status="error",
+            message=str(e)[:500],
+        )
+        raise
     finally:
-        driver.quit()
+        quit_driver(driver)
 
 
 @shared_task(bind=True, queue="default")

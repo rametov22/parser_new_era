@@ -23,7 +23,7 @@ WORKDIR /app
 ENV CHROME_BIN=/usr/bin/chromium
 ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
 
-COPY ../../backend/requirements.txt .
+COPY backend/requirements.txt .
 RUN pip config set global.break-system-packages true
 RUN pip install --no-cache-dir -r requirements.txt
 

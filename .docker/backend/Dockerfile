@@ -24,10 +24,10 @@ WORKDIR /app
 ENV CHROME_BIN=/usr/bin/chromium
 ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
 
-COPY ../../backend/requirements.txt .
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY ../../backend/ .
+COPY backend/ .
 
 # CMD ["python", "infinity"]
 CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]

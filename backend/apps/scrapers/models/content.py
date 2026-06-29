@@ -225,6 +225,7 @@ class Content(models.Model):
         max_digits=4, decimal_places=2, default=1.00, null=True, blank=True
     )
     kmax_rating = models.FloatField(default=10.0)
+    avg_watch_seconds = models.PositiveIntegerField(default=0)
 
     studios = models.ManyToManyField("Studio", blank=True, related_name="contents")
     collections = models.ManyToManyField(

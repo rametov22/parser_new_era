@@ -29,14 +29,15 @@ from django.conf import settings
 from django.utils import timezone
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
+from selenium.common.exceptions import TimeoutException, WebDriverException
 
 from ..models import Content, ScraperLog
-from .vavada import (
-    create_driver,
+from ..chrome_utils import (
+    create_chrome_driver,
     quit_driver,
     get_chrome_count,
-    report_chrome_heartbeat,
 )
+from .vavada import report_chrome_heartbeat
 
 
 logger = logging.getLogger("vavada_serials")
@@ -138,10 +139,24 @@ def parse_vavada_serial(self, kp_id):
     start_time = timezone.now()
     try:
         film = Content.objects.get(kino_poisk_id=kp_id)
-        driver = create_driver()
+        driver = create_chrome_driver(stealth=True)
 
         url = f"https://iframe.cloud/iframe/{kp_id}"
-        driver.get(url)
+        try:
+            driver.get(url)
+        except TimeoutException:
+            logger.warning(
+                f"[serial] {kp_id} | timeout загрузки страницы, пересоздаём драйвер"
+            )
+            quit_driver(driver)
+            driver = create_chrome_driver(stealth=True)
+            try:
+                driver.get(url)
+            except TimeoutException:
+                logger.warning(
+                    f"[serial] {kp_id} | повторный timeout загрузки, пропускаем"
+                )
+                return f"No player for {kp_id} (page timeout)"
 
         try:
             WebDriverWait(driver, 10).until(

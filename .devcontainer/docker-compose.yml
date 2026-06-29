@@ -1,6 +1,6 @@
 x-backend-defaults: &backend-defaults
   build:
-    context: ./
+    context: ..
     dockerfile: .devcontainer/backend/Dockerfile
   restart: unless-stopped
 

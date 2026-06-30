@@ -11,7 +11,7 @@ from .models import Content, ScraperLog, YtConnectContent
 
 
 # Дашборд кэшируется в Redis; ?refresh=1 пересчитывает принудительно.
-CACHE_KEY = "parser_stats:dashboard:v3"
+CACHE_KEY = "parser_stats:dashboard:v4"
 CACHE_TTL = 60  # секунд
 
 # TTL «свежести» (после чего запись считается протухшей и подлежит перепарсу):
@@ -49,7 +49,10 @@ def _stats_for_content_source(source, now, ttl_days, icon, title):
     Статистика одного источника, пишущего в Content: "kp" (Кинопоиск) или
     "ru" (Vavada). Vavada скоупится окном премьеры (settings.PREMIERE дней).
 
-    Запросов РОВНО 2: большой conditional .aggregate() + гистограмма глубины.
+    Запросов 2 для KP, 3 для Vavada: большой conditional .aggregate(),
+    гистограмма глубины и, для Vavada, активность из ScraperLog. У Vavada
+    успешная проверка может закончиться без плеера, поэтому скорость считаем
+    как "проверено", а охват — отдельно по найденным плеерам.
     """
     status_field = f"is_parsed_{source}"
     parsed_at_field = f"parsed_at_{source}"
@@ -98,7 +101,7 @@ def _stats_for_content_source(source, now, ttl_days, icon, title):
         ),
         newest=Max(parsed_at_field),
         oldest=Min(parsed_at_field),
-        # Скорость: ТОЛЬКО реально спарсенные (status=parsed). Иначе refill/диспетчер
+        # KP-скорость: ТОЛЬКО реально спарсенные (status=parsed). Иначе refill/диспетчер
         # ставит parsed_at на ЗАХВАТЕ (in_progress) и завышает темп.
         act_hour=Count("id", filter=Q(**{status_field: "parsed", f"{parsed_at_field}__gte": h1})),
         act_day=Count("id", filter=Q(**{status_field: "parsed", f"{parsed_at_field}__gte": d1})),
@@ -106,13 +109,44 @@ def _stats_for_content_source(source, now, ttl_days, icon, title):
         act_month=Count("id", filter=Q(**{status_field: "parsed", f"{parsed_at_field}__gte": d30})),
     )
 
+    activity = {
+        "hour": agg["act_hour"],
+        "day": agg["act_day"],
+        "week": agg["act_week"],
+        "month": agg["act_month"],
+    }
+    speed_subtitle = "фильмов спарсено"
+    eta_subtitle = "при текущем темпе"
+    newest_parse = agg["newest"]
+    oldest_parse = agg["oldest"]
+    if source == "ru":
+        log_q = Q(task_name__startswith="Vavada parser ", status="success")
+        log_agg = ScraperLog.objects.filter(log_q).aggregate(
+            act_hour=Count("id", filter=Q(created_at__gte=h1)),
+            act_day=Count("id", filter=Q(created_at__gte=d1)),
+            act_week=Count("id", filter=Q(created_at__gte=d7)),
+            act_month=Count("id", filter=Q(created_at__gte=d30)),
+            newest=Max("created_at"),
+            oldest=Min("created_at"),
+        )
+        activity = {
+            "hour": log_agg["act_hour"],
+            "day": log_agg["act_day"],
+            "week": log_agg["act_week"],
+            "month": log_agg["act_month"],
+        }
+        speed_subtitle = "проверок сделано"
+        eta_subtitle = "по темпу проверок"
+        newest_parse = log_agg["newest"] or newest_parse
+        oldest_parse = log_agg["oldest"] or oldest_parse
+
     total = agg["total"] or 0
     parsed = agg["ever"] or 0          # охват: спарсено хоть раз (монотонно)
     parsed_now = agg["parsed_now"]
     in_progress = agg["in_progress"]
     not_parsed = agg["not_parsed"]
     fresh = agg["fresh"]
-    per_day = agg["act_day"]
+    per_day = activity["day"]
 
     coverage_pct = _pct(parsed, total)
     remaining = not_parsed             # живая очередь прямо сейчас
@@ -155,6 +189,8 @@ def _stats_for_content_source(source, now, ttl_days, icon, title):
         "coverage_pct": coverage_pct,
         "remaining": remaining,
         "per_day": per_day,
+        "speed_subtitle": speed_subtitle,
+        "eta_subtitle": eta_subtitle,
         "eta_days": eta_days,
         # статус-бар «прямо сейчас»
         "parsed_now": parsed_now,
@@ -166,17 +202,17 @@ def _stats_for_content_source(source, now, ttl_days, icon, title):
         "not_parsed_pct": _pct(not_parsed, total),
         # скорость по периодам (4 ячейки)
         "activity": [
-            {"label": "час", "count": agg["act_hour"]},
-            {"label": "сутки", "count": agg["act_day"]},
-            {"label": "нед", "count": agg["act_week"]},
-            {"label": "мес", "count": agg["act_month"]},
+            {"label": "час", "count": activity["hour"]},
+            {"label": "сутки", "count": activity["day"]},
+            {"label": "нед", "count": activity["week"]},
+            {"label": "мес", "count": activity["month"]},
         ],
         # свежесть / метки времени
         "reparse_ttl_days": ttl_days,
         "fresh": fresh,
         "fresh_pct": _pct(fresh, total),
-        "newest_parse": agg["newest"],
-        "oldest_parse": agg["oldest"],
+        "newest_parse": newest_parse,
+        "oldest_parse": oldest_parse,
         # глубина перепарса (свёрнуто; честная замена «циклов»)
         "depth_breakdown": depth_breakdown,
     }

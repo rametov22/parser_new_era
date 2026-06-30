@@ -699,9 +699,9 @@
             <div class="sub">{{ health.uz_parsed|intcomma }} из {{ health.uz_total|intcomma }}</div>
         </div>
         <div class="ps-kpi">
-            <div class="lbl">Спарсено за сутки</div>
+            <div class="lbl">Обработано за сутки</div>
             <div class="val">{{ health.parsed_24h|intcomma }}</div>
-            <div class="sub">по всем источникам</div>
+            <div class="sub">спарсено / проверено</div>
         </div>
         <div class="ps-kpi {% if health.stuck_total %}bad{% endif %}">
             <div class="lbl">Застряло / ошибок</div>
@@ -744,12 +744,12 @@
                     <div class="ps-tile">
                         <div class="t-lbl">Скорость / сутки</div>
                         <div class="t-val">{{ s.per_day|intcomma }}</div>
-                        <div class="t-sub">фильмов спарсено</div>
+                        <div class="t-sub">{{ s.speed_subtitle }}</div>
                     </div>
                     <div class="ps-tile">
                         <div class="t-lbl">ETA очереди</div>
                         <div class="t-val">{% if s.eta_days != None %}{{ s.eta_days }}<span style="font-size:12px;color:var(--ps-muted)"> дн</span>{% else %}—{% endif %}</div>
-                        <div class="t-sub">{% if s.eta_days != None %}при текущем темпе{% else %}нет данных{% endif %}</div>
+                        <div class="t-sub">{% if s.eta_days != None %}{{ s.eta_subtitle }}{% else %}нет данных{% endif %}</div>
                     </div>
                 </div>
 
@@ -790,12 +790,12 @@
                 {% elif s.eta_days != None %}
                 <div class="ps-eta">
                     <span class="em">⏱</span>
-                    <span>Осталось <strong>{{ s.remaining|intcomma }}</strong> — при темпе {{ s.per_day|intcomma }}/сут текущий проход завершится за <strong>≈ {{ s.eta_days }} дн.</strong></span>
+                    <span>Осталось <strong>{{ s.remaining|intcomma }}</strong> — {{ s.eta_subtitle }} {{ s.per_day|intcomma }}/сут текущий проход завершится за <strong>≈ {{ s.eta_days }} дн.</strong></span>
                 </div>
                 {% else %}
                 <div class="ps-eta">
                     <span class="em">⏸</span>
-                    <span>Осталось <strong>{{ s.remaining|intcomma }}</strong>, но за сутки спарсено 0 — парсер стоит или ждёт.</span>
+                    <span>Осталось <strong>{{ s.remaining|intcomma }}</strong>, но за сутки: 0 — парсер стоит или ждёт.</span>
                 </div>
                 {% endif %}
 

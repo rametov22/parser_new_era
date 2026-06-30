@@ -39,6 +39,12 @@ LAST_PAGE_CACHE_KEY = "kp:last_page"
 LAST_PAGE_TTL = 86400  # 1 день
 
 DISCOVER_PAGES_PER_TICK = 20
+HOT_DISCOVER_URLS = (
+    "https://www.kinopoisk.ru/lists/movies/popular-series/",
+    "https://www.kinopoisk.ru/lists/movies/year--2025-2026/?b=series",
+    "https://www.kinopoisk.ru/lists/movies/year--2026-2026/?b=series",
+    "https://www.kinopoisk.ru/lists/movies/year--2024-2026/",
+)
 
 QUEUE_NAME = "kp_films_queue"
 QUEUE_THRESHOLD = 100
@@ -59,16 +65,51 @@ def _redis_client():
     )
 
 
-def _extract_kp_ids(soup):
-    kp_ids = []
-    items = soup.find_all("div", attrs={"data-tid": "679d3e26"})
-    for item in items:
-        link = item.find("a", href=re.compile(r"/film/\d+/"))
-        if link:
-            match = re.search(r"/film/(\d+)/", link.get("href") or "")
-            if match:
-                kp_ids.append(match.group(1))
-    return kp_ids
+def _extract_kp_items(soup):
+    """
+    Возвращает [(kp_id, href, is_serial), ...] со страницы списка.
+
+    Кинопоиск периодически меняет data-tid, а сериалы часто идут как
+    /series/<id>/. Поэтому не привязываемся к одному контейнеру и собираем
+    все прямые ссылки film/series, дедуплицируя по id.
+    """
+    items = []
+    seen = set()
+    for link in soup.find_all("a", href=re.compile(r"/(?:film|series)/\d+/")):
+        href = link.get("href") or ""
+        match = re.search(r"/(film|series)/(\d+)/", href)
+        if not match:
+            continue
+        kind, kp_id = match.groups()
+        if kp_id in seen:
+            continue
+        seen.add(kp_id)
+        items.append((kp_id, f"/{kind}/{kp_id}/", kind == "series"))
+    return items
+
+
+def _save_discovered_items(kp_items):
+    new_films = 0
+    marked_serials = 0
+    for kp_id, _href, is_serial in kp_items:
+        content, created = models.Content.objects.get_or_create(
+            kino_poisk_id=kp_id,
+            defaults={
+                "name_ru": "",
+                "name_original": "",
+                "description": "",
+                "is_serial": is_serial,
+                "is_parsed_kp": "not_parsed",
+            },
+        )
+        if created:
+            new_films += 1
+            print(f"[discover] +фильм {kp_id}")
+        elif is_serial and not content.is_serial and not content.name_ru:
+            content.is_serial = True
+            content.save(update_fields=("is_serial",))
+            marked_serials += 1
+    return new_films, marked_serials
 
 
 @shared_task(bind=True, queue="kp_pages_queue")
@@ -99,6 +140,29 @@ def discover_task(self):
 
         pages_done = 0
         new_films = 0
+        marked_serials = 0
+
+        for hot_url in HOT_DISCOVER_URLS:
+            driver.get(hot_url)
+            time.sleep(random.uniform(1, 2))
+
+            if "showcaptcha" in driver.current_url:
+                print(f"[discover] КАПЧА на hot-url {hot_url}, прерываемся")
+                break
+
+            soup = BeautifulSoup(driver.page_source, "lxml")
+            kp_items = _extract_kp_items(soup)
+            if not kp_items:
+                print(f"[discover] Hot-url {hot_url}: фильмов не найдено")
+                continue
+
+            added, serials = _save_discovered_items(kp_items)
+            new_films += added
+            marked_serials += serials
+            print(
+                f"[discover] Hot-url {hot_url}: найдено {len(kp_items)}, "
+                f"новых {added}, serial-mark {serials}"
+            )
 
         for offset in range(DISCOVER_PAGES_PER_TICK):
             page = cursor + offset
@@ -113,26 +177,16 @@ def discover_task(self):
                 break
 
             soup = BeautifulSoup(driver.page_source, "lxml")
-            kp_ids = _extract_kp_ids(soup)
+            kp_items = _extract_kp_items(soup)
 
-            if not kp_ids:
+            if not kp_items:
                 print(f"[discover] Страница {page}: фильмов не найдено")
                 pages_done += 1
                 continue
 
-            for kp_id in kp_ids:
-                _, created = models.Content.objects.get_or_create(
-                    kino_poisk_id=kp_id,
-                    defaults={
-                        "name_ru": "",
-                        "name_original": "",
-                        "is_serial": False,
-                        "is_parsed_kp": "not_parsed",
-                    },
-                )
-                if created:
-                    new_films += 1
-                    print(f"[discover] +фильм {kp_id}")
+            added, serials = _save_discovered_items(kp_items)
+            new_films += added
+            marked_serials += serials
 
             pages_done += 1
 
@@ -144,7 +198,8 @@ def discover_task(self):
         r.set(DISCOVER_CURSOR_KEY, new_cursor)
         print(
             f"[discover] Готово. Страниц обработано: {pages_done}, "
-            f"новых фильмов: {new_films}, следующий курсор: {new_cursor}"
+            f"новых фильмов: {new_films}, serial-mark: {marked_serials}, "
+            f"следующий курсор: {new_cursor}"
         )
 
     except Exception as e:
@@ -227,7 +282,7 @@ def refill_task(self):
     #   4) -id — стабильный tiebreak.
     from django.db.models import F
 
-    kp_ids = list(
+    content_rows = list(
         models.Content.objects.filter(is_parsed_kp="not_parsed")
         .order_by(
             "parse_count_kp",
@@ -235,20 +290,23 @@ def refill_task(self):
             F("parsed_at_kp").asc(nulls_first=True),
             "-id",
         )
-        .values_list("kino_poisk_id", flat=True)[:REFILL_BATCH]
+        .values("kino_poisk_id", "is_serial")[:REFILL_BATCH]
     )
 
-    if not kp_ids:
+    if not content_rows:
         print(f"[refill] Нет not_parsed записей")
         return 0
 
+    kp_ids = [row["kino_poisk_id"] for row in content_rows]
     models.Content.objects.filter(kino_poisk_id__in=kp_ids).update(
         is_parsed_kp="in_progress",
         parsed_at_kp=timezone.now(),
     )
 
-    for kp_id in kp_ids:
-        parse_single_film_task.delay(kp_id, f"/film/{kp_id}/")
+    for row in content_rows:
+        kp_id = row["kino_poisk_id"]
+        kind = "series" if row["is_serial"] else "film"
+        parse_single_film_task.delay(kp_id, f"/{kind}/{kp_id}/")
 
     print(f"[refill] Очередь была {length}, поставлено в очередь: {len(kp_ids)}")
     return len(kp_ids)

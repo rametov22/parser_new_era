@@ -25,6 +25,27 @@ additional_path_episodes = "episodes/"
 additional_path_other = "other/"
 
 
+def extract_kp_items_from_list(soup):
+    """
+    Возвращает [(kp_id, href), ...] со страницы списка KP.
+
+    Не используем data-tid: он меняется. Берём и фильмы, и сериалы.
+    """
+    items = []
+    seen = set()
+    for link in soup.find_all("a", href=re.compile(r"/(?:film|series)/\d+/")):
+        href = link.get("href") or ""
+        match = re.search(r"/(film|series)/(\d+)/", href)
+        if not match:
+            continue
+        kind, kp_id = match.groups()
+        if kp_id in seen:
+            continue
+        seen.add(kp_id)
+        items.append((kp_id, f"/{kind}/{kp_id}/"))
+    return items
+
+
 def inject_cookies(driver, cookies):
     driver.get("https://www.kinopoisk.ru/robots.txt")
 
@@ -87,23 +108,17 @@ def parse_page_list_task(self, page_number):
 
         soup = BeautifulSoup(driver.page_source, "lxml")
 
-        items = soup.find_all("div", attrs={"data-tid": "679d3e26"})
-
-        if not items:
+        kp_items = extract_kp_items_from_list(soup)
+        if not kp_items:
             return
 
-        for item in items:
-            link = item.find("a", href=re.compile(r"/film/\d+/"))
-            if link:
-                href = link.get("href")
-                kp_id = re.search(r"/film/(\d+)/", href).group(1)
+        for kp_id, href in kp_items:
+            exists = models.Content.objects.filter(
+                kino_poisk_id=kp_id, is_parsed_kp="parsed"
+            ).exists()
 
-                exists = models.Content.objects.filter(
-                    kino_poisk_id=kp_id, is_parsed_kp="parsed"
-                ).exists()
-
-                if not exists:
-                    parse_single_film_task.delay(kp_id, href)
+            if not exists:
+                parse_single_film_task.delay(kp_id, href)
     except Exception as e:
         print(f"Ошибка на странице {page_number}: {e}")
         ScraperLog.objects.create(
@@ -204,6 +219,7 @@ def parse_single_film_task(self, kp_id, href, cookies=None):
                 is_serial=is_serial,
                 name_ru=name_ru or "",
                 name_original=name_original or "",
+                description=description or "",
                 is_parsed_kp="in_progress",
             )
             content_obj.save()

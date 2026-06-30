@@ -276,6 +276,42 @@ class Content(models.Model):
     parse_count_uz = models.PositiveIntegerField(default=0)
     parse_count_ru = models.PositiveIntegerField(default=0)
 
+    views_24h = models.PositiveIntegerField(default=0)
+    views_7d = models.PositiveIntegerField(default=0)
+    views_30d = models.PositiveIntegerField(default=0)
+    views_prev_30d = models.PositiveIntegerField(default=0)
+    views_total = models.PositiveBigIntegerField(default=0)
+    starts_total = models.PositiveBigIntegerField(default=0)
+    finishes_total = models.PositiveBigIntegerField(default=0)
+    completion_rate = models.DecimalField(
+        max_digits=5, decimal_places=4, default=0
+    )
+    popularity_score = models.DecimalField(
+        max_digits=6, decimal_places=5, default=0
+    )
+    counters_updated_at = models.DateTimeField(null=True, blank=True)
+
+    content_kind = models.CharField(max_length=8, default="film")
+    is_anime = models.BooleanField(default=False)
+    is_cartoon = models.BooleanField(default=False)
+    rating_is_real = models.BooleanField(default=False)
+
+    runtime_seconds = models.PositiveIntegerField(null=True, blank=True)
+    total_runtime_seconds = models.PositiveIntegerField(null=True, blank=True)
+    average_episode_runtime_seconds = models.PositiveIntegerField(
+        null=True, blank=True
+    )
+    episodes_count = models.PositiveSmallIntegerField(null=True, blank=True)
+    seasons_count = models.PositiveSmallIntegerField(null=True, blank=True)
+    runtime_source = models.CharField(max_length=16, default="none")
+
+    dominant_color = models.CharField(max_length=7, null=True, blank=True)
+    secondary_colors = models.JSONField(default=list, blank=True)
+    poster_processed_at = models.DateTimeField(null=True, blank=True)
+    poster_color_hash = models.CharField(max_length=32, null=True, blank=True)
+    poster_color_attempts = models.PositiveSmallIntegerField(default=0)
+    color_locked = models.BooleanField(default=False)
+
     # objects = ContentQuerySet.as_manager()
 
     class Meta:

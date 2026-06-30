@@ -43,6 +43,7 @@ read_cursor = connections["default"].cursor()
 read_cursor.execute(f"""
     SELECT content_id, content_url, is_serial, parsing_status,
            parsing_status_player, connect_fail_count, player_fail_count,
+           yt_name, yt_name_uz, yt_name_original, yt_year,
            created_at, updated_at
     FROM {SRC_TABLE}
     ORDER BY id
@@ -53,8 +54,9 @@ insert_sql = f"""
     INSERT INTO {DST_TABLE}
     (content_id, content_url, is_serial, parsing_status,
      parsing_status_player, connect_fail_count, player_fail_count,
+     yt_name, yt_name_uz, yt_name_original, yt_year,
      created_at, updated_at)
-    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     ON CONFLICT (content_id) DO UPDATE SET
         content_url = EXCLUDED.content_url,
         is_serial = EXCLUDED.is_serial,
@@ -62,6 +64,10 @@ insert_sql = f"""
         parsing_status_player = EXCLUDED.parsing_status_player,
         connect_fail_count = EXCLUDED.connect_fail_count,
         player_fail_count = EXCLUDED.player_fail_count,
+        yt_name = EXCLUDED.yt_name,
+        yt_name_uz = EXCLUDED.yt_name_uz,
+        yt_name_original = EXCLUDED.yt_name_original,
+        yt_year = EXCLUDED.yt_year,
         created_at = EXCLUDED.created_at,
         updated_at = EXCLUDED.updated_at
 """
@@ -77,6 +83,10 @@ for row in read_cursor:
         parsing_status_player,
         connect_fail_count,
         player_fail_count,
+        yt_name,
+        yt_name_uz,
+        yt_name_original,
+        yt_year,
         created_at,
         updated_at,
     ) = row
@@ -89,6 +99,10 @@ for row in read_cursor:
             parsing_status_player,
             connect_fail_count,
             player_fail_count,
+            yt_name,
+            yt_name_uz,
+            yt_name_original,
+            yt_year,
             created_at,
             updated_at,
         )

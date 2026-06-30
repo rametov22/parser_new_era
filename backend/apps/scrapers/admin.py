@@ -47,6 +47,9 @@ class LinkedToContentFilter(admin.SimpleListFilter):
 class YtConnectContentAdmin(admin.ModelAdmin):
     list_display = (
         "content_id",
+        "yt_name",
+        "yt_name_uz",
+        "yt_name_original",
         "parsing_status",
         "parsing_status_player",
         "is_serial",
@@ -60,7 +63,7 @@ class YtConnectContentAdmin(admin.ModelAdmin):
         "is_serial",
         LinkedToContentFilter,
     )
-    search_fields = ("content_id",)
+    search_fields = ("content_id", "yt_name", "yt_name_uz", "yt_name_original")
     readonly_fields = ("created_at", "updated_at")
 
 

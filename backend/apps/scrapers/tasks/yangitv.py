@@ -7,7 +7,7 @@
   2. spawn_yt_connect      — диспетчер: батчем берёт not_parsed,
                               для каждой запускает parse_yt_connect.
   3. parse_yt_connect      — для одного content_id берёт детали
-                              (name_ru/year), ищет совпадение в Content,
+                              (name/name_ru/orig_name/year), ищет совпадение в Content,
                               заполняет name_uz/description_uz/poster_uz/
                               film_content_uz/age_restriction.
   4. spawn_yt_movie_urls   — диспетчер: берёт parsed, у которых
@@ -225,58 +225,122 @@ def _normalize_name_soft(s: str) -> str:
     return _normalize_name(s)
 
 
-def _match_content(yt_name: str, yt_year, content_id: int):
+def _match_content(yt_name: str, yt_year, content_id: int, yt_name_original: str = ""):
     """
     Многоступенчатый матч YtConnectContent → Content.
 
     Возвращает (content, strategy) либо (None, reason_str).
     Стратегии (по убыванию строгости):
-      1. exact_norm_year   — нормализованное имя + год
-      2. exact_norm        — нормализованное имя без года (если в yt нет year)
-      3. soft_norm_year    — мягкая нормализация (выкинуть скобки/сабтайтл) + год
+      1. exact_norm_year             — нормализованное ru-имя + год
+      2. exact_original_norm_year    — orig_name + Content.name_original + год
+      3. exact_*_unique_any_year     — имя уникально во всей базе,
+                                      если год yangi.tv неверный
+      4. exact_norm                  — нормализованное имя без года (если в yt нет year)
+      5. soft_norm_year              — мягкая нормализация + год
     Если на любом шаге найдено >1 совпадение — НЕ привязываем (ambiguous).
     """
-    if not yt_name:
+    if not yt_name and not yt_name_original:
         return None, "no_yt_name"
 
     yt_strict = _normalize_name(yt_name)
     yt_soft = _normalize_name_soft(yt_name)
+    yt_original_strict = _normalize_name(yt_name_original)
+    yt_original_soft = _normalize_name_soft(yt_name_original)
 
     # Строим набор кандидатов через Python (Content в main_db, JOIN не делаем).
-    # Сужаем по году чтобы не тянуть всю базу.
-    qs = Content.objects.only("id", "name_ru", "year_production")
+    # Сужаем по году для строгих стратегий, но ниже умеем безопасный fallback
+    # на уникальное совпадение во всей базе, когда год на yangi.tv ошибочный.
+    qs = Content.objects.only("id", "name_ru", "name_original", "year_production")
     if yt_year:
         qs = qs.filter(year_production=yt_year)
     candidates = list(qs)
-    if not candidates:
-        return None, "no_kp_in_year"
+    no_candidates_in_year = bool(yt_year and not candidates)
 
     # Стратегия 1: exact normalized + year
-    exact_year = [
-        c for c in candidates
-        if _normalize_name(c.name_ru) == yt_strict
-    ]
-    if len(exact_year) == 1:
-        return exact_year[0], "exact_norm_year"
-    if len(exact_year) > 1:
-        return None, f"ambiguous_exact_{len(exact_year)}"
+    if candidates and yt_strict:
+        exact_year = [
+            c for c in candidates
+            if _normalize_name(c.name_ru) == yt_strict
+        ]
+        if len(exact_year) == 1:
+            return exact_year[0], "exact_norm_year"
+        if len(exact_year) > 1:
+            return None, f"ambiguous_exact_{len(exact_year)}"
+
+    # Fallback: original title from Yangi → Content.name_original
+    if candidates and yt_original_strict:
+        exact_original_year = [
+            c for c in candidates
+            if _normalize_name(c.name_original) == yt_original_strict
+        ]
+        if len(exact_original_year) == 1:
+            return exact_original_year[0], "exact_original_norm_year"
+        if len(exact_original_year) > 1:
+            return None, f"ambiguous_original_exact_{len(exact_original_year)}"
+
+    all_qs = None
+
+    # Если год отличается, допускаем матч без года только когда название уникально.
+    if yt_year and (yt_strict or yt_original_strict):
+        all_qs = list(
+            Content.objects.only(
+                "id", "name_ru", "name_original", "year_production"
+            )
+        )
+        if yt_strict:
+            exact_any_year = [
+                c for c in all_qs
+                if _normalize_name(c.name_ru) == yt_strict
+            ]
+            if len(exact_any_year) == 1:
+                return exact_any_year[0], "exact_norm_unique_any_year"
+            if len(exact_any_year) > 1:
+                return None, f"ambiguous_exact_any_year_{len(exact_any_year)}"
+
+        if yt_original_strict:
+            exact_original_any_year = [
+                c for c in all_qs
+                if _normalize_name(c.name_original) == yt_original_strict
+            ]
+            if len(exact_original_any_year) == 1:
+                return exact_original_any_year[0], "exact_original_norm_unique_any_year"
+            if len(exact_original_any_year) > 1:
+                return None, (
+                    f"ambiguous_original_exact_any_year_{len(exact_original_any_year)}"
+                )
 
     # Стратегия 2: exact normalized (без года, если в yt нет года)
     if not yt_year:
-        all_qs = list(
-            Content.objects.only("id", "name_ru", "year_production")
-        )
-        exact_any = [
-            c for c in all_qs
-            if _normalize_name(c.name_ru) == yt_strict
-        ]
-        if len(exact_any) == 1:
-            return exact_any[0], "exact_norm_noyear"
-        if len(exact_any) > 1:
-            return None, f"ambiguous_exact_noyear_{len(exact_any)}"
+        if all_qs is None:
+            all_qs = list(
+                Content.objects.only(
+                    "id", "name_ru", "name_original", "year_production"
+                )
+            )
+        if yt_strict:
+            exact_any = [
+                c for c in all_qs
+                if _normalize_name(c.name_ru) == yt_strict
+            ]
+            if len(exact_any) == 1:
+                return exact_any[0], "exact_norm_noyear"
+            if len(exact_any) > 1:
+                return None, f"ambiguous_exact_noyear_{len(exact_any)}"
+
+        if yt_original_strict:
+            exact_original_any = [
+                c for c in all_qs
+                if _normalize_name(c.name_original) == yt_original_strict
+            ]
+            if len(exact_original_any) == 1:
+                return exact_original_any[0], "exact_original_norm_noyear"
+            if len(exact_original_any) > 1:
+                return None, (
+                    f"ambiguous_original_exact_noyear_{len(exact_original_any)}"
+                )
 
     # Стратегия 3: soft normalize (выкинуть скобки/сабтайтл) + year
-    if yt_year and yt_soft:
+    if candidates and yt_year and yt_soft:
         soft_matches = [
             c for c in candidates
             if _normalize_name_soft(c.name_ru) == yt_soft
@@ -285,6 +349,19 @@ def _match_content(yt_name: str, yt_year, content_id: int):
             return soft_matches[0], "soft_norm_year"
         if len(soft_matches) > 1:
             return None, f"ambiguous_soft_{len(soft_matches)}"
+
+    if candidates and yt_year and yt_original_soft:
+        soft_original_matches = [
+            c for c in candidates
+            if _normalize_name_soft(c.name_original) == yt_original_soft
+        ]
+        if len(soft_original_matches) == 1:
+            return soft_original_matches[0], "soft_original_norm_year"
+        if len(soft_original_matches) > 1:
+            return None, f"ambiguous_original_soft_{len(soft_original_matches)}"
+
+    if no_candidates_in_year:
+        return None, "no_kp_in_year"
 
     return None, "no_match"
 
@@ -476,23 +553,37 @@ def spawn_yt_connect():
 def parse_yt_connect(self, content_id):
     """
     Для одного yangi.tv content_id:
-      - тянет детали (name_ru, year, description, poster, age, ...)
-      - ищет совпадение в Content по (name_ru, year_production)
+      - тянет детали (name, name_ru, orig_name, year, description, poster, age, ...)
+      - ищет совпадение в Content по (name_ru, year_production),
+        затем по (orig_name, year_production)
       - заполняет uz-поля и помечает parsed.
 
-    Если фильм уже связан (Content с id_uz=content_id и непустым name_uz),
-    пропускаем API-запрос — повторно ничего не получим, только трафик зря.
+    Если фильм уже связан и metadata yangi.tv уже сохранена,
+    пропускаем API-запрос.
     """
     task_name = f"YT connect {content_id}"
 
-    # Быстрый skip — если фильм уже связан и заполнен.
+    yt_meta = (
+        YtConnectContent.objects.filter(content_id=content_id)
+        .only("yt_name", "yt_name_uz", "yt_name_original", "yt_year")
+        .first()
+    )
+
+    # Быстрый skip — если фильм уже связан и metadata yangi.tv уже заполнена.
     already_linked = (
         Content.objects.filter(id_uz=content_id)
         .exclude(name_uz="")
         .exclude(name_uz__isnull=True)
         .exists()
     )
-    if already_linked:
+    metadata_cached = bool(
+        yt_meta
+        and yt_meta.yt_name
+        and yt_meta.yt_name_uz
+        and yt_meta.yt_name_original
+        and yt_meta.yt_year is not None
+    )
+    if already_linked and metadata_cached:
         YtConnectContent.objects.filter(content_id=content_id).update(
             parsing_status="parsed", updated_at=timezone.now()
         )
@@ -514,17 +605,21 @@ def parse_yt_connect(self, content_id):
             _record_yt_failure(content_id, "connect", "empty data")
             return f"empty data {content_id}"
 
-        name_ru = data.get("name_ru")
+        name_uz = data.get("name") or ""
+        name_ru = data.get("name_ru") or ""
+        name_original = data.get("orig_name") or ""
         year = data.get("year")
 
-        content_original, strategy = _match_content(name_ru, year, content_id)
+        content_original, strategy = _match_content(
+            name_ru, year, content_id, name_original
+        )
         logger.info(
             f"[yt-match] {content_id} | yt={name_ru!r}/{year} → "
             f"{strategy} → {f'kp_id={content_original.kino_poisk_id}' if content_original else 'NONE'}"
         )
 
         if content_original:
-            content_original.name_uz = data.get("name") or ""
+            content_original.name_uz = name_uz
             content_original.description_uz = data.get("description") or ""
             content_original.id_uz = content_id
             if content_original.age_restriction is None:
@@ -585,7 +680,9 @@ def parse_yt_connect(self, content_id):
 
         YtConnectContent.objects.filter(content_id=content_id).update(
             parsing_status="parsed",
-            yt_name=name_ru or "",
+            yt_name=name_ru,
+            yt_name_uz=name_uz,
+            yt_name_original=name_original,
             yt_year=year,
             updated_at=timezone.now(),
         )
@@ -836,7 +933,7 @@ def retry_yt_failed():
 
     # «player есть, но не связано»: player спарсен, но в Content не попал.
     # Чтобы не дёргать API для всех каждый цикл — матчим ЛОКАЛЬНО по кэшу
-    # yt_name/yt_year и переводим в not_parsed (→ перепарс через API) только:
+    # yt_name/yt_name_original/yt_year и переводим в not_parsed (→ перепарс через API) только:
     #   - у кого матч НАШЁЛСЯ локально (KP-сторона дозаполнилась) — connect свяжет;
     #   - у кого кэша имени ещё нет (старые записи) — один раз сходить за деталями.
     # Несвязанные без локального матча API не трогают вообще.
@@ -849,16 +946,18 @@ def retry_yt_failed():
     unlinked = (
         YtConnectContent.objects.filter(parsing_status_player="parsed")
         .exclude(content_id__in=linked_filled)
-        .only("content_id", "yt_name", "yt_year")
+        .only("content_id", "yt_name", "yt_name_original", "yt_year")
     )
     relink_ids = []
     for y in unlinked.iterator():
-        if not y.yt_name:
+        if not y.yt_name and not y.yt_name_original:
             relink_ids.append(y.content_id)  # кэша ещё нет → один раз сходить в API
             continue
         if y.yt_year is None:
             continue  # без года матч ненадёжен — API не дёргаем
-        content, _strategy = _match_content(y.yt_name, y.yt_year, y.content_id)
+        content, _strategy = _match_content(
+            y.yt_name, y.yt_year, y.content_id, y.yt_name_original
+        )
         if content:
             relink_ids.append(y.content_id)  # локально найден матч → connect свяжет
     relink = YtConnectContent.objects.filter(content_id__in=relink_ids).update(

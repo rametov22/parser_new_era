@@ -186,12 +186,18 @@ def _build_options(user_data_dir: str, binary_path: str) -> Options:
     return options
 
 
-def create_chrome_driver(stealth: bool = False):
+def create_chrome_driver(
+    stealth: bool = False,
+    page_load_timeout: int = 30,
+    script_timeout: int = 30,
+):
     """
     Создаёт headless Chrome с максимальной стабильностью.
 
     Args:
         stealth: если True, применяется selenium-stealth (нужно для Vavada).
+        page_load_timeout: сколько секунд ждать загрузку страницы.
+        script_timeout: сколько секунд ждать выполнение JS.
     """
     kill_zombie_chrome()
 
@@ -218,8 +224,8 @@ def create_chrome_driver(stealth: bool = False):
     driver._yt_profile_dir = user_data_dir  # type: ignore[attr-defined]
 
     try:
-        driver.set_page_load_timeout(30)
-        driver.set_script_timeout(30)
+        driver.set_page_load_timeout(page_load_timeout)
+        driver.set_script_timeout(script_timeout)
 
         if stealth:
             from selenium_stealth import stealth

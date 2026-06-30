@@ -1,7 +1,9 @@
 import time
 import random
+from contextlib import suppress
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup
+from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
@@ -44,6 +46,28 @@ class CaptchaException(Exception):
     pass
 
 
+def _url_path_loaded(drivers, url):
+    with suppress(Exception):
+        expected = urlparse(url).path.rstrip("/")
+        current = urlparse(drivers.current_url).path.rstrip("/")
+        return bool(expected and current.startswith(expected))
+    return False
+
+
+def _safe_get(drivers, url):
+    try:
+        drivers.get(url)
+        return True
+    except TimeoutException as exc:
+        first_line = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
+        print(f"page load timeout для {url}: {first_line}")
+        with suppress(Exception):
+            drivers.execute_script("window.stop();")
+        if _url_path_loaded(drivers, url):
+            return False
+        raise
+
+
 def scroll_until_find(drivers, scroll_height=1000, max_height=3000, timeout=20):
     end_time = time.time() + timeout
     current_height = 0
@@ -67,11 +91,11 @@ def scroll_until_find(drivers, scroll_height=1000, max_height=3000, timeout=20):
 
 
 def load_page_and_soup(drivers, url, wait_url=True, timeout=10):
-    drivers.get(url)
+    _safe_get(drivers, url)
 
     if "showcaptcha" in drivers.current_url:
         click_button_square(drivers)
-        drivers.get(url)
+        _safe_get(drivers, url)
 
     if "showcaptcha" in drivers.current_url:
         raise CaptchaException(f"Капча не обошлась на {url}")

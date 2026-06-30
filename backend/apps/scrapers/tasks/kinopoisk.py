@@ -3,9 +3,15 @@ import time
 import random
 import json
 import datetime as dt
+import logging
+from contextlib import suppress
+from urllib.parse import urlparse
+
 from bs4 import BeautifulSoup
 from celery import shared_task
 from django.utils import timezone
+from selenium.common.exceptions import TimeoutException
+
 from .. import models
 from ..models import ScraperLog
 from ..chrome_utils import (
@@ -23,6 +29,9 @@ additional_path_like = "like/"
 additional_path_awards = "awards/"
 additional_path_episodes = "episodes/"
 additional_path_other = "other/"
+
+logger = logging.getLogger("kinopoisk_parser")
+KP_PAGE_LOAD_TIMEOUT = 45
 
 
 def extract_kp_items_from_list(soup):
@@ -46,8 +55,39 @@ def extract_kp_items_from_list(soup):
     return items
 
 
+def create_kp_driver():
+    return create_chrome_driver(
+        stealth=False,
+        page_load_timeout=KP_PAGE_LOAD_TIMEOUT,
+        script_timeout=KP_PAGE_LOAD_TIMEOUT,
+    )
+
+
+def _url_path_loaded(driver, url):
+    with suppress(Exception):
+        expected = urlparse(url).path.rstrip("/")
+        current = urlparse(driver.current_url).path.rstrip("/")
+        return bool(expected and current.startswith(expected))
+    return False
+
+
+def safe_get_kp(driver, url, label, allow_partial=True):
+    try:
+        driver.get(url)
+        return True
+    except TimeoutException as exc:
+        first_line = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
+        logger.warning(f"[kp-get-timeout] {label}: {first_line}")
+        with suppress(Exception):
+            driver.execute_script("window.stop();")
+        if allow_partial and _url_path_loaded(driver, url):
+            logger.warning(f"[kp-get-timeout] {label}: continue with partial page")
+            return False
+        raise
+
+
 def inject_cookies(driver, cookies):
-    driver.get("https://www.kinopoisk.ru/robots.txt")
+    safe_get_kp(driver, "https://www.kinopoisk.ru/robots.txt", "inject cookies")
 
     for cookie in cookies:
         cookie.pop("expiry", None)
@@ -59,7 +99,7 @@ def inject_cookies(driver, cookies):
 
 
 def get_last_page_number(driver):
-    driver.get("https://www.kinopoisk.ru/lists/movies/")
+    safe_get_kp(driver, "https://www.kinopoisk.ru/lists/movies/", "last page")
     time.sleep(random.uniform(2, 4))
 
     soup = BeautifulSoup(driver.page_source, "lxml")
@@ -78,7 +118,7 @@ def start_global_parsing():
     with open("/app/kinopoisk_cookies.json", "r") as f:
         cookies = json.load(f)
     # cache.set("kp_cookies", cookies, 86400)
-    driver = create_chrome_driver(stealth=False)
+    driver = create_kp_driver()
     try:
         inject_cookies(driver, cookies)
         last_page = get_last_page_number(driver)
@@ -94,11 +134,15 @@ def parse_page_list_task(self, page_number):
     with open("/app/kinopoisk_cookies.json", "r") as f:
         cookies = json.load(f)
 
-    driver = create_chrome_driver(stealth=False)
+    driver = create_kp_driver()
 
     try:
         inject_cookies(driver, cookies)
-        driver.get(f"https://www.kinopoisk.ru/lists/movies/?page={page_number}")
+        safe_get_kp(
+            driver,
+            f"https://www.kinopoisk.ru/lists/movies/?page={page_number}",
+            f"KP page {page_number}",
+        )
 
         time.sleep(random.uniform(1, 3))
 
@@ -160,7 +204,7 @@ def parse_single_film_task(self, kp_id, href, cookies=None):
     driver = None
     try:
         try:
-            driver = create_chrome_driver(stealth=False)
+            driver = create_kp_driver()
         except Exception as e:
             error_msg = f"Chrome не стартанул для {kp_id}: {type(e).__name__}: {e}"
             print(error_msg)
@@ -174,7 +218,7 @@ def parse_single_film_task(self, kp_id, href, cookies=None):
             )
             return
         inject_cookies(driver, cookies)
-        driver.get(film_href)
+        safe_get_kp(driver, film_href, f"KP film {kp_id}")
 
         if "showcaptcha" in driver.current_url:
             print(f"Капча на ID {kp_id}")
@@ -240,7 +284,7 @@ def parse_single_film_task(self, kp_id, href, cookies=None):
 
         if is_new_record or (content_obj.year_production or 0) >= current_year - 1:
             # Нужно заменить collection и film details потому-что в пред запросе он остается на другой странице
-            driver.get(film_href)
+            safe_get_kp(driver, film_href, f"KP film {kp_id} refresh")
             time.sleep(2)
             (
                 platform_id,

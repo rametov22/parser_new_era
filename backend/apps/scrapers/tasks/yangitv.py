@@ -183,11 +183,21 @@ def _detect_quality_from_url(url: str) -> str:
 
 
 def _parse_season_name(name: str):
-    """Из 'N-fasl' извлекает номер сезона."""
+    """
+    Из 'N-fasl' извлекает номер сезона.
+
+    Некоторые сериалы Yangi отдают не сезоны, а блоки серий:
+    '121-137 qismlar', '81-120 qismlar' или даже '1-qism'. Для Kmax это
+    плоский сериал, поэтому складываем такие эпизоды в сезон 1.
+    """
     if not name:
         return None
     match = re.search(r"(\d+)\s*-\s*fasl", name, re.IGNORECASE)
-    return int(match.group(1)) if match else None
+    if match:
+        return int(match.group(1))
+    if re.search(r"\d+\s*-\s*qism|\d+\s*-\s*\d+\s*qism", name, re.IGNORECASE):
+        return 1
+    return None
 
 
 def _normalize_name(s: str) -> str:

@@ -163,6 +163,8 @@ def _parse_episode_name(name: str):
     Примеры:
       '8-qism 1080p' → (8, '1080p'); '7-qism 720p' → (7, '720p');
       '8-qism (oxirgi)' → (8, None);  '5-qism' → (5, None).
+      '1080p' → (1, '1080p') для фильмов, которые Yangi отдаёт
+      в serial-like формате.
     Если качества нет в имени — вернём None, потом определим из URL.
     """
     if not name:
@@ -171,6 +173,8 @@ def _parse_episode_name(name: str):
     q_match = re.search(r"(\d+)\s*p", name, re.IGNORECASE)
     ep = int(ep_match.group(1)) if ep_match else None
     quality = f"{q_match.group(1)}p" if q_match else None
+    if ep is None and quality:
+        ep = 1
     return ep, quality
 
 
@@ -195,6 +199,8 @@ def _parse_season_name(name: str):
     match = re.search(r"(\d+)\s*-\s*fasl", name, re.IGNORECASE)
     if match:
         return int(match.group(1))
+    if re.search(r"barcha|barchasi", name, re.IGNORECASE):
+        return 1
     if re.search(r"\d+\s*-\s*qism|\d+\s*-\s*\d+\s*qism", name, re.IGNORECASE):
         return 1
     return None

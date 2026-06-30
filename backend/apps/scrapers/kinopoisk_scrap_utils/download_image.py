@@ -1,8 +1,9 @@
 import requests
 from django.core.files.base import ContentFile
-import os
 from PIL import Image
 from io import BytesIO
+
+from .poster_colors import apply_poster_colors
 
 
 def download_and_save_poster(content_obj, poster_url):
@@ -28,6 +29,13 @@ def download_and_save_poster(content_obj, poster_url):
             image_name = f"{content_obj.kino_poisk_id}.{image_extension}"
 
             content_obj.poster.save(image_name, ContentFile(image_bytes), save=True)
+            try:
+                apply_poster_colors(content_obj, image_bytes)
+            except Exception as exc:
+                print(
+                    "[poster-colors] ОШИБКА для "
+                    f"kp_id={content_obj.kino_poisk_id}: {type(exc).__name__}: {exc}"
+                )
         else:
             print(f"[poster] неожиданный статус {response.status_code}, постер не сохранён")
     except Exception as e:

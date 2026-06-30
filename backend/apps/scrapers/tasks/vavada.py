@@ -64,6 +64,7 @@ def report_chrome_heartbeat(label):
 VAVADA_QUEUE_NAME = "vavada_queue"
 VAVADA_QUEUE_THRESHOLD = 500
 VAVADA_IN_PROGRESS_STUCK_MINUTES = 30
+VAVADA_NO_PLAYER_RETRY_HOURS = 4
 
 
 def _vavada_queue_length():
@@ -86,9 +87,10 @@ def spawn_iframe_parsers():
 
     Берём:
       - is_parsed_ru="not_parsed" (новые / неудачные)
+        не чаще раза в VAVADA_NO_PLAYER_RETRY_HOURS, если уже проверяли;
       - ИЛИ is_parsed_ru="parsed" + is_serial=True (сериалам нужно обновлять
         last_episode/last_season/audio_tracks по мере выхода новых серий)
-    Плюс окно last_update <= today - 4 дня (не дёргаем чаще 4 дней).
+        и last_update <= today - 4 дня.
     Плюс окно премьеры PREMIERE дней.
     """
     queue_len = _vavada_queue_length()
@@ -99,23 +101,30 @@ def spawn_iframe_parsers():
         )
         return 0
 
-    today = timezone.now().date()
+    now = timezone.now()
+    today = now.date()
     start_date = today - timedelta(days=settings.PREMIERE)
     cut_date = today - timedelta(days=4)
+    retry_after = now - timedelta(hours=VAVADA_NO_PLAYER_RETRY_HOURS)
 
     date_filter = Q(premiere__range=(start_date, today)) | Q(
         premiere_ru__range=(start_date, today)
     )
 
-    status_filter = Q(is_parsed_ru="not_parsed") | (
-        Q(is_parsed_ru="parsed") & Q(is_serial=True)
+    not_parsed_ready = Q(is_parsed_ru="not_parsed") & (
+        Q(parsed_at_ru__isnull=True) | Q(parsed_at_ru__lte=retry_after)
     )
+    serial_refresh_ready = (
+        Q(is_parsed_ru="parsed") & Q(is_serial=True) & Q(last_update__lte=cut_date)
+    )
+    status_filter = not_parsed_ready | serial_refresh_ready
+    batch_size = max(VAVADA_QUEUE_THRESHOLD - queue_len, 0)
 
     kp_ids = list(
         Content.objects.filter(status_filter)
-        .filter(last_update__lte=cut_date)
         .filter(date_filter)
-        .values_list("kino_poisk_id", flat=True)
+        .order_by("parsed_at_ru", "last_update", "id")
+        .values_list("kino_poisk_id", flat=True)[:batch_size]
     )
 
     if not kp_ids:
@@ -133,7 +142,10 @@ def spawn_iframe_parsers():
     for kp_id in kp_ids:
         parse_single_iframe.delay(kp_id)
 
-    logger.info(f"[vavada-dispatcher] поставлено в очередь: {len(kp_ids)}")
+    logger.info(
+        f"[vavada-dispatcher] поставлено в очередь: {len(kp_ids)} "
+        f"(queue_before={queue_len}, batch_size={batch_size})"
+    )
     return len(kp_ids)
 
 
@@ -214,10 +226,13 @@ def parse_single_iframe(self, kp_id):
                     f"[vavada] {kp_id} | повторный timeout загрузки, пропускаем"
                 )
                 film.is_parsed_ru = "not_parsed"
-                film.last_update = (
-                    timezone.now() - timedelta(days=3, hours=20)
-                ).date()
-                film.save(update_fields=["is_parsed_ru", "last_update"])
+                film.parsed_at_ru = timezone.now()
+                film.save(update_fields=["is_parsed_ru", "parsed_at_ru"])
+                ScraperLog.objects.create(
+                    task_name=f"Vavada parser {kp_id}",
+                    status="success",
+                    message="Плеер пока не найден: page timeout",
+                )
                 return f"No player found for {kp_id} (page timeout)"
 
         # Ожидание фрейма
@@ -231,12 +246,18 @@ def parse_single_iframe(self, kp_id):
                 )
             )
         except Exception:
-            # Плеер ещё не появился. Сбрасываем статус и ставим last_update
-            # на ~4 часа назад, чтобы фильм снова попал в окно через 4 часа,
-            # а не через 4 дня.
+            # Плеер ещё не появился. Сбрасываем статус и фиксируем время
+            # проверки в parsed_at_ru: диспетчер вернёт фильм в работу
+            # не раньше чем через VAVADA_NO_PLAYER_RETRY_HOURS.
+            checked_at = timezone.now()
             film.is_parsed_ru = "not_parsed"
-            film.last_update = (timezone.now() - timedelta(days=3, hours=20)).date()
-            film.save(update_fields=["is_parsed_ru", "last_update"])
+            film.parsed_at_ru = checked_at
+            film.save(update_fields=["is_parsed_ru", "parsed_at_ru"])
+            ScraperLog.objects.create(
+                task_name=f"Vavada parser {kp_id}",
+                status="success",
+                message="Плеер пока не найден",
+            )
             return f"No player found for {kp_id}"
 
         # Сохраняем основные данные
@@ -388,9 +409,10 @@ def parse_single_iframe(self, kp_id):
         try:
             raise self.retry(exc=exc, countdown=60)
         except self.MaxRetriesExceededError:
+            checked_at = timezone.now()
             Content.objects.filter(kino_poisk_id=kp_id).update(
                 is_parsed_ru="not_parsed",
-                last_update=(timezone.now() - timedelta(days=3, hours=20)).date(),
+                parsed_at_ru=checked_at,
             )
             logger.error(f"☠️  {kp_id} | retries исчерпаны, статус сброшен в not_parsed")
             raise

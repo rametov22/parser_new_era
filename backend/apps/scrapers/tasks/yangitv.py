@@ -913,8 +913,9 @@ def retry_yt_failed():
          (моргнул API, "no urls decoded" в тот момент и т.п.).
 
       2. player='parsed', но не попавшие в Content → матчим ЛОКАЛЬНО по кэшу
-         yt_name/yt_year (без запроса к API) и сбрасываем connect в not_parsed
-         только тем, у кого матч уже нашёлся (KP-сторона дозаполнила name_ru).
+         yt_name/yt_name_original/yt_year (без запроса к API) и сбрасываем
+         connect в not_parsed только тем, у кого матч уже нашёлся
+         (KP-сторона дозаполнила Content).
          Тогда connect один раз сходит в API и свяжет, скопировав content_url
          в film_content_uz. Несвязанные без матча API не дёргают.
 

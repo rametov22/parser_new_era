@@ -205,6 +205,7 @@ CELERY_TASK_ROUTES = {
     "apps.scrapers.tasks.yangitv.spawn_yt_movie_urls": {"queue": "default"},
     "apps.scrapers.tasks.yangitv.parse_yt_movie_url": {"queue": "default"},
     "apps.scrapers.tasks.yangitv.expire_yt_stuck": {"queue": "default"},
+    "apps.scrapers.tasks.yangitv.retry_yt_failed": {"queue": "default"},
     "apps.scrapers.tasks.yangitv.refresh_kmax_yangi_cache": {"queue": "default"},
 }
 

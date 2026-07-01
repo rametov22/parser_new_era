@@ -194,6 +194,8 @@ def parse_single_iframe(self, kp_id):
     start_time = timezone.now()
     try:
         film = Content.objects.get(kino_poisk_id=kp_id)
+        old_last_season = film.last_season
+        old_last_episode = film.last_episode
 
         # Перезахватываем in_progress на момент РЕАЛЬНОГО старта обработки
         # (а не постановки в очередь). При длинной очереди фильм ждёт дольше
@@ -271,6 +273,8 @@ def parse_single_iframe(self, kp_id):
 
         # логика поиска дорожек
         filtered_audio_tracks = []
+        parsed_last_episode = None
+        parsed_last_season = None
         track_div = soup.find("div", id="player")
         if track_div:
             playlist = track_div.find("pjsdiv", id="player_playlist1")
@@ -300,9 +304,7 @@ def parse_single_iframe(self, kp_id):
                                     episode_numbers.append(int(match.group(1)))
 
                 if episode_numbers:
-                    film.last_episode = str(max(episode_numbers))
-                else:
-                    film.last_episode = None
+                    parsed_last_episode = max(episode_numbers)
 
                 season_numbers = []
                 season_wrapper = track_div.find("pjsdiv", id="player_playlist3")
@@ -320,9 +322,30 @@ def parse_single_iframe(self, kp_id):
                                     season_numbers.append(int(match.group(1)))
 
                 if season_numbers:
-                    film.last_season = str(max(season_numbers))
-                else:
-                    film.last_season = None
+                    parsed_last_season = max(season_numbers)
+
+                new_last_season = (
+                    parsed_last_season
+                    if parsed_last_season is not None
+                    else old_last_season
+                )
+                new_last_episode = (
+                    parsed_last_episode
+                    if parsed_last_episode is not None
+                    else old_last_episode
+                )
+                season_changed = (
+                    new_last_season != old_last_season
+                    or new_last_episode != old_last_episode
+                )
+                film.last_season = new_last_season
+                film.last_episode = new_last_episode
+                if season_changed:
+                    film.last_update_season = timezone.now().date()
+            else:
+                season_changed = False
+        else:
+            season_changed = False
 
         # Сохраняем audio_tracks только если плеер вернул данные.
         # Если бот-чекер заблокировал страницу — не затираем существующие треки.
@@ -372,6 +395,7 @@ def parse_single_iframe(self, kp_id):
                 "last_episode",
                 "last_update",
             ]
+            + (["last_update_season"] if season_changed else [])
         )
 
         # Атомарный финал: переводим в parsed + инкрементируем счётчик

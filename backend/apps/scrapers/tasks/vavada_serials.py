@@ -6,6 +6,7 @@ parse_single_iframe прошёл), периодически обновлять:
   - last_season
   - last_episode
   - audio_tracks
+  - last_update_season (только когда last_season/last_episode реально изменились)
 
 Чтобы видеть новые сезоны/эпизоды по мере их выхода. Полную переразметку
 (player_id / player_variables) делает `parse_single_iframe`.
@@ -14,7 +15,7 @@ parse_single_iframe прошёл), периодически обновлять:
   - is_serial=True
   - film_content IS NOT NULL (плеер уже найден)
   - year_production в окне [current_year - 8, current_year]
-  - last_update <= today - 7 дней (давно не обновлялись)
+  - last_update <= today - SERIALS_REFRESH_DAYS (давно не обновлялись)
   - is_parsed_ru="parsed" (не пересекается с активным parse_single_iframe)
 """
 import re
@@ -329,17 +330,30 @@ def parse_vavada_serial(self, kp_id):
             f"last_episode={last_episode}"
         )
 
+        old_last_season = film.last_season
+        old_last_episode = film.last_episode
+        new_last_season = int(last_season) if last_season is not None else old_last_season
+        new_last_episode = int(last_episode) if last_episode is not None else old_last_episode
+        season_changed = (
+            new_last_season != old_last_season
+            or new_last_episode != old_last_episode
+        )
+
         film.audio_tracks = filtered_audio_tracks
-        film.last_season = last_season
-        film.last_episode = last_episode
+        film.last_season = new_last_season
+        film.last_episode = new_last_episode
         film.last_update = timezone.now()
+        update_fields = [
+            "audio_tracks",
+            "last_season",
+            "last_episode",
+            "last_update",
+        ]
+        if season_changed:
+            film.last_update_season = timezone.now().date()
+            update_fields.append("last_update_season")
         film.save(
-            update_fields=[
-                "audio_tracks",
-                "last_season",
-                "last_episode",
-                "last_update",
-            ]
+            update_fields=update_fields
         )
 
         exec_time = (timezone.now() - start_time).total_seconds()
@@ -351,7 +365,10 @@ def parse_vavada_serial(self, kp_id):
         ScraperLog.objects.create(
             task_name=f"Vavada serial refresh {kp_id}",
             status="success",
-            message=f"S:{last_season or 0} E:{last_episode or 0}",
+            message=(
+                f"S:{film.last_season or 0} E:{film.last_episode or 0} "
+                f"changed={season_changed}"
+            ),
         )
         return kp_id
 

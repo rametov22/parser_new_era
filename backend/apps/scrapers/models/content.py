@@ -247,6 +247,7 @@ class Content(models.Model):
     last_season = models.IntegerField(null=True, blank=True)
     last_episode = models.IntegerField(null=True, blank=True)
     last_update = models.DateField(null=True, blank=True, default=timezone.now)
+    last_update_season = models.DateField(null=True, blank=True)
 
     film_content_uz = models.JSONField(null=True, blank=True, default=dict)
     name_uz = models.CharField(max_length=255, null=True)

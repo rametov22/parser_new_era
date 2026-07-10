@@ -16,7 +16,7 @@ parse_single_iframe прошёл), периодически обновлять:
   - film_content IS NOT NULL (плеер уже найден)
   - year_production в окне [current_year - 8, current_year]
   - last_update <= today - SERIALS_REFRESH_DAYS (давно не обновлялись)
-  - is_parsed_ru="parsed" (не пересекается с активным parse_single_iframe)
+  - is_parsed_ru != "in_progress" (не пересекается с активным parse_single_iframe)
 """
 import re
 import time
@@ -99,7 +99,7 @@ def spawn_vavada_serials():
         Content.objects.filter(
             is_serial=True,
             film_content__isnull=False,
-            year_production__range=(start_year, current_year),
+            # year_production__range=(start_year, current_year),
             last_update__lte=cut_date,
         )
         .exclude(is_parsed_ru="in_progress")
@@ -334,6 +334,16 @@ def parse_vavada_serial(self, kp_id):
         old_last_episode = film.last_episode
         new_last_season = int(last_season) if last_season is not None else old_last_season
         new_last_episode = int(last_episode) if last_episode is not None else old_last_episode
+        print(
+            f"[serial-print] {kp_id} raw last_season={last_season!r} "
+            f"raw last_episode={last_episode!r}",
+            flush=True,
+        )
+        print(
+            f"[serial-print] {kp_id} db old S:{old_last_season} E:{old_last_episode} "
+            f"-> new S:{new_last_season} E:{new_last_episode}",
+            flush=True,
+        )
         season_changed = (
             new_last_season != old_last_season
             or new_last_episode != old_last_episode

@@ -8,6 +8,7 @@
     под pids_limit и приводят к "failed to start a thread for the new session";
   - корректно закрывать драйвер даже при падении renderer.
 """
+import json
 import logging
 import os
 import re
@@ -15,6 +16,8 @@ import shutil
 import subprocess
 import tempfile
 from contextlib import suppress
+from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 import psutil
 from django.conf import settings
@@ -129,7 +132,79 @@ def kill_zombie_chrome():
         logger.info(f"[kill-zombie] убито orphaned chrome/chromedriver: {killed}")
 
 
-def _build_options(user_data_dir: str, binary_path: str) -> Options:
+def _add_proxy_options(options: Options, user_data_dir: str, proxy_url: str) -> bool:
+    """Configure a proxy and return whether an auth extension was created."""
+    parsed = urlsplit(proxy_url)
+    if not parsed.scheme or not parsed.hostname or not parsed.port:
+        raise ValueError("proxy_url must contain scheme, host and port")
+
+    proxy_server = f"{parsed.scheme}://{parsed.hostname}:{parsed.port}"
+    if parsed.username is None and parsed.password is None:
+        options.add_argument(f"--proxy-server={proxy_server}")
+        return False
+
+    if parsed.username is None or parsed.password is None:
+        raise ValueError("proxy_url must contain both username and password")
+
+    extension_dir = Path(user_data_dir) / "proxy_auth_extension"
+    extension_dir.mkdir(parents=True, exist_ok=True)
+    manifest = {
+        "manifest_version": 3,
+        "name": "Vavada proxy authentication",
+        "version": "1.0.0",
+        "permissions": [
+            "proxy",
+            "storage",
+            "webRequest",
+            "webRequestAuthProvider",
+        ],
+        "host_permissions": ["<all_urls>"],
+        "background": {"service_worker": "background.js"},
+    }
+    proxy_config = {
+        "mode": "fixed_servers",
+        "rules": {
+            "singleProxy": {
+                "scheme": parsed.scheme,
+                "host": parsed.hostname,
+                "port": parsed.port,
+            },
+            "bypassList": ["localhost", "127.0.0.1", "::1"],
+        },
+    }
+    credentials = {
+        "username": unquote(parsed.username),
+        "password": unquote(parsed.password),
+    }
+    background = (
+        f"const proxyConfig = {json.dumps(proxy_config)};\n"
+        f"const credentials = {json.dumps(credentials)};\n"
+        "chrome.proxy.settings.set({value: proxyConfig, scope: 'regular'});\n"
+        "chrome.webRequest.onAuthRequired.addListener(\n"
+        "  (details, callback) => callback(\n"
+        "    details.isProxy ? {authCredentials: credentials} : {}\n"
+        "  ),\n"
+        "  {urls: ['<all_urls>']},\n"
+        "  ['asyncBlocking']\n"
+        ");\n"
+    )
+    (extension_dir / "manifest.json").write_text(
+        json.dumps(manifest),
+        encoding="utf-8",
+    )
+    (extension_dir / "background.js").write_text(background, encoding="utf-8")
+
+    options.add_argument(f"--disable-extensions-except={extension_dir}")
+    options.add_argument(f"--load-extension={extension_dir}")
+    return True
+
+
+def _build_options(
+    user_data_dir: str,
+    binary_path: str,
+    proxy_url: str | None = None,
+    allow_third_party_cookies: bool = False,
+) -> Options:
     """Собирает опции Chrome, оптимизированные для headless-парсинга в контейнере."""
     options = Options()
     options.binary_location = binary_path
@@ -146,7 +221,11 @@ def _build_options(user_data_dir: str, binary_path: str) -> Options:
     # Уменьшаем число фоновых процессов и сетевой активности.
     options.add_argument("--disable-background-networking")
     options.add_argument("--disable-default-apps")
-    options.add_argument("--disable-extensions")
+    uses_proxy_extension = False
+    if proxy_url:
+        uses_proxy_extension = _add_proxy_options(options, user_data_dir, proxy_url)
+    if not uses_proxy_extension:
+        options.add_argument("--disable-extensions")
     options.add_argument("--disable-sync")
     options.add_argument("--no-first-run")
     options.add_argument("--no-default-browser-check")
@@ -171,9 +250,16 @@ def _build_options(user_data_dir: str, binary_path: str) -> Options:
 
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
-    options.add_experimental_option(
-        "prefs", {"intl.accept_languages": "ru,ru-RU,en-US,en"}
-    )
+    prefs = {"intl.accept_languages": "ru,ru-RU,en-US,en"}
+    if allow_third_party_cookies:
+        prefs.update(
+            {
+                "profile.block_third_party_cookies": False,
+                "profile.cookie_controls_mode": 0,
+                "profile.default_content_setting_values.cookies": 1,
+            }
+        )
+    options.add_experimental_option("prefs", prefs)
 
     # User-agent совпадает с реальной версией Chrome.
     version = _chrome_version(binary_path)
@@ -190,6 +276,8 @@ def create_chrome_driver(
     stealth: bool = False,
     page_load_timeout: int = 30,
     script_timeout: int = 30,
+    proxy_url: str | None = None,
+    allow_third_party_cookies: bool = False,
 ):
     """
     Создаёт headless Chrome с максимальной стабильностью.
@@ -198,6 +286,8 @@ def create_chrome_driver(
         stealth: если True, применяется selenium-stealth (нужно для Vavada).
         page_load_timeout: сколько секунд ждать загрузку страницы.
         script_timeout: сколько секунд ждать выполнение JS.
+        proxy_url: HTTP(S)/SOCKS proxy URL, optionally with basic auth.
+        allow_third_party_cookies: разрешить обычные cookies в cross-site iframe.
     """
     kill_zombie_chrome()
 
@@ -205,7 +295,12 @@ def create_chrome_driver(
     chromedriver_path = _chromedriver_binary()
 
     user_data_dir = tempfile.mkdtemp(prefix="chrome_profile_")
-    options = _build_options(user_data_dir, binary_path)
+    options = _build_options(
+        user_data_dir,
+        binary_path,
+        proxy_url=proxy_url,
+        allow_third_party_cookies=allow_third_party_cookies,
+    )
 
     service = Service(executable_path=chromedriver_path)
     driver = None
@@ -226,6 +321,12 @@ def create_chrome_driver(
     try:
         driver.set_page_load_timeout(page_load_timeout)
         driver.set_script_timeout(script_timeout)
+
+        if allow_third_party_cookies:
+            driver.execute_cdp_cmd(
+                "Network.setCookieControls",
+                {"enableThirdPartyCookieRestriction": False},
+            )
 
         if stealth:
             from selenium_stealth import stealth
@@ -252,6 +353,61 @@ def create_chrome_driver(
         raise
 
     return driver
+
+
+def apply_vavada_trust_cookie(driver) -> bool:
+    """Install private GreyWeb verification cookies before opening iframe.cloud."""
+    trust_value = str(
+        getattr(settings, "VAVADA_WD_TRUST_COOKIE", "") or ""
+    ).strip()
+    approval_value = str(
+        getattr(settings, "VAVADA_WD_APPROVAL_COOKIE", "") or ""
+    ).strip()
+    if not trust_value and not approval_value:
+        return False
+    if not trust_value or not approval_value:
+        raise WebDriverException(
+            "Both VAVADA_WD_TRUST_COOKIE and VAVADA_WD_APPROVAL_COOKIE are required"
+        )
+
+    cookies = (
+        {
+            "name": "wd_trust",
+            "value": trust_value,
+            "domain": ".obrut.show",
+            "path": "/",
+            "secure": True,
+            "httpOnly": True,
+            "sameSite": "None",
+            "priority": "High",
+        },
+        {
+            "name": "wd_approval",
+            "value": approval_value,
+            "domain": ".obrut.show",
+            "path": "/",
+            "secure": True,
+            "httpOnly": True,
+            "sameSite": "None",
+            "priority": "High",
+            "partitionKey": {
+                "topLevelSite": "https://iframe.cloud",
+                "hasCrossSiteAncestor": True,
+            },
+        },
+    )
+    for cookie in cookies:
+        result = driver.execute_cdp_cmd("Network.setCookie", cookie)
+        if result.get("success") is False:
+            raise WebDriverException(
+                f"Could not set Vavada {cookie['name']} cookie"
+            )
+
+    logger.info(
+        "[vavada-cookie] wd_trust + partitioned wd_approval applied "
+        "for .obrut.show"
+    )
+    return True
 
 
 def quit_driver(driver):

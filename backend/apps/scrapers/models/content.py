@@ -242,6 +242,7 @@ class Content(models.Model):
     add_content_date = models.DateField(null=True, blank=True)
     audio_tracks = models.JSONField(null=True, blank=True, default=list)
     player_variables = models.JSONField(null=True, blank=True, default=list)
+    is_pirated = models.BooleanField(default=False)
     have_trailer_player = models.BooleanField(default=False, null=True)
     player_id = models.PositiveIntegerField(unique=True, null=True)
     last_season = models.IntegerField(null=True, blank=True)

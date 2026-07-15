@@ -34,11 +34,14 @@ from selenium.common.exceptions import TimeoutException, WebDriverException
 
 from ..models import Content, ScraperLog
 from ..chrome_utils import (
+    apply_vavada_trust_cookie,
     create_chrome_driver,
     quit_driver,
     get_chrome_count,
 )
 from .vavada import report_chrome_heartbeat
+from ..release_quality import has_pirated_release
+from ..vavada_proxy import acquire_vavada_proxy
 
 
 logger = logging.getLogger("vavada_serials")
@@ -59,6 +62,15 @@ VAVADA_SERIALS_QUEUE_THRESHOLD = 1000
 VAVADA_SERIALS_BATCH = 200
 SERIALS_REFRESH_DAYS = 2
 SERIALS_YEAR_WINDOW = 8
+EPISODE_LABEL_RE = re.compile(
+    r"^\s*(\d+)\s*(?:эпизод(?:а|ов)?|сери(?:я|и|й))\b",
+    re.IGNORECASE,
+)
+
+
+def _episode_number(text):
+    match = EPISODE_LABEL_RE.search(str(text or ""))
+    return int(match.group(1)) if match else None
 
 
 def _vavada_serials_queue_length():
@@ -125,7 +137,7 @@ def spawn_vavada_serials():
     bind=True,
     queue="vavada_serials_queue",
     max_retries=2,
-    rate_limit="10/m",
+    rate_limit=settings.VAVADA_SERIALS_TASK_RATE_LIMIT,
     acks_late=True,
     soft_time_limit=120,
     time_limit=150,
@@ -137,10 +149,22 @@ def parse_vavada_serial(self, kp_id):
     Не трогает is_parsed_ru / film_content / player_*.
     """
     driver = None
+    proxy_lease = None
     start_time = timezone.now()
     try:
         film = Content.objects.get(kino_poisk_id=kp_id)
-        driver = create_chrome_driver(stealth=True)
+        proxy_lease = acquire_vavada_proxy(f"vavada-serial:{kp_id}")
+        proxy_url = proxy_lease.url if proxy_lease else None
+        driver = create_chrome_driver(
+            stealth=True,
+            proxy_url=proxy_url,
+            allow_third_party_cookies=True,
+        )
+        if apply_vavada_trust_cookie(driver):
+            logger.info(
+                f"[serial-debug] {kp_id} | wd_trust + partitioned "
+                "wd_approval installed"
+            )
 
         url = f"https://iframe.cloud/iframe/{kp_id}"
         try:
@@ -150,28 +174,69 @@ def parse_vavada_serial(self, kp_id):
                 f"[serial] {kp_id} | timeout загрузки страницы, пересоздаём драйвер"
             )
             quit_driver(driver)
-            driver = create_chrome_driver(stealth=True)
+            if proxy_lease:
+                proxy_lease.release(failed=True)
+            proxy_lease = acquire_vavada_proxy(f"vavada-serial-retry:{kp_id}")
+            proxy_url = proxy_lease.url if proxy_lease else None
+            driver = create_chrome_driver(
+                stealth=True,
+                proxy_url=proxy_url,
+                allow_third_party_cookies=True,
+            )
+            if apply_vavada_trust_cookie(driver):
+                logger.info(
+                    f"[serial-debug] {kp_id} | wd_trust + partitioned "
+                    "wd_approval installed on retry"
+                )
             try:
                 driver.get(url)
             except TimeoutException:
                 logger.warning(
                     f"[serial] {kp_id} | повторный timeout загрузки, пропускаем"
                 )
+                if proxy_lease:
+                    proxy_lease.release(failed=True)
                 return f"No player for {kp_id} (page timeout)"
 
+        def _ready_player_frame(current_driver):
+            frame = current_driver.find_element(By.ID, "playerFrame")
+            src = frame.get_attribute("src") or ""
+            return frame if src and not src.startswith("https://iframe") else False
+
         try:
-            WebDriverWait(driver, 10).until(
-                lambda d: (
-                    (iframe := d.find_element(By.ID, "playerFrame"))
-                    and iframe.get_attribute("src")
-                    and not iframe.get_attribute("src").startswith("https://iframe")
-                )
-            )
+            player_frame = WebDriverWait(driver, 10).until(_ready_player_frame)
         except Exception:
             logger.warning(f"[serial] {kp_id} | плеер не найден")
             return f"No player for {kp_id}"
 
-        driver.switch_to.frame(0)
+        logger.info(
+            f"[serial-debug] {kp_id} | switching to playerFrame: "
+            f"{player_frame.get_attribute('src')}"
+        )
+        driver.switch_to.frame(player_frame)
+        source_lower = driver.page_source.lower()
+        waf_challenge = any(
+            marker in source_lower
+            for marker in (
+                "cb-container",
+                "wsdk.js",
+                "verification browser",
+                "верификация браузера",
+            )
+        )
+        frame_details = [
+            {
+                "id": frame.get_attribute("id"),
+                "src": frame.get_attribute("src"),
+            }
+            for frame in driver.find_elements(By.TAG_NAME, "iframe")
+        ]
+        logger.info(
+            f"[serial-debug] {kp_id} | player document: "
+            f"url={driver.current_url!r} title={driver.title!r} "
+            f"html={len(driver.page_source)} waf_challenge={waf_challenge} "
+            f"iframes={frame_details!r}"
+        )
         player_loaded = False
         in_visual = False
         deadline = time.time() + 60
@@ -294,6 +359,10 @@ def parse_vavada_serial(self, kp_id):
 
         audio_items_text = _read_items("player_playlist1")
         filtered_audio_tracks = [t for t in audio_items_text if t]
+        print(
+            f"[serial-print] {kp_id} raw audio_tracks={filtered_audio_tracks!r}",
+            flush=True,
+        )
         logger.info(
             f"[serial-debug] {kp_id} | audio tracks: {len(filtered_audio_tracks)}"
         )
@@ -313,12 +382,12 @@ def parse_vavada_serial(self, kp_id):
             time.sleep(4)
 
         def _only_episodes(items):
-            return [t for t in items if t and "сезон" not in t.lower()]
+            return [t for t in items if _episode_number(t) is not None]
 
         ep_items_1 = _only_episodes(_read_items("player_playlist1"))
         ep_items_2 = _only_episodes(_read_items("player_playlist2"))
-        _, max_ep_1 = _max_number(ep_items_1)
-        _, max_ep_2 = _max_number(ep_items_2)
+        max_ep_1 = max((_episode_number(t) for t in ep_items_1), default=None)
+        max_ep_2 = max((_episode_number(t) for t in ep_items_2), default=None)
         max_ep = max(
             (n for n in (max_ep_1, max_ep_2) if n is not None),
             default=None,
@@ -350,11 +419,15 @@ def parse_vavada_serial(self, kp_id):
         )
 
         film.audio_tracks = filtered_audio_tracks
+        film.is_pirated = has_pirated_release(
+            filtered_audio_tracks,
+        )
         film.last_season = new_last_season
         film.last_episode = new_last_episode
         film.last_update = timezone.now()
         update_fields = [
             "audio_tracks",
+            "is_pirated",
             "last_season",
             "last_episode",
             "last_update",
@@ -387,6 +460,8 @@ def parse_vavada_serial(self, kp_id):
         logger.error(f"❌ {kp_id} | FAILED | {error_msg}")
         if driver:
             quit_driver(driver)
+        if proxy_lease:
+            proxy_lease.release(failed=True)
         ScraperLog.objects.create(
             task_name=f"Vavada serial refresh {kp_id}",
             status="error",
@@ -400,4 +475,6 @@ def parse_vavada_serial(self, kp_id):
     finally:
         if driver:
             quit_driver(driver)
+        if proxy_lease:
+            proxy_lease.release()
         report_chrome_heartbeat("vavada_serials")

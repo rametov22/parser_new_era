@@ -10,7 +10,10 @@ x-backend-defaults: &backend-defaults
   # ("failed to start a thread for the new session").
   init: true
   env_file:
-    - ./.env
+    - path: ./.env
+      required: true
+    - path: ./.env.vavada
+      required: false
   volumes:
     - django-static:/app/static
   depends_on:

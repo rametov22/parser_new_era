@@ -1,9 +1,11 @@
 __pycache__
 *.pyc
 .env
+.env.vavada
 dumps/
 backend/static/
 backend/media/
 backend/celerybeat-schedule
 backend/celerybeat-schedule-shm
 backend/celerybeat-schedule-wal
+backend/.vavada-proxies.txt

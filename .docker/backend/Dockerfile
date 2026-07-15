@@ -4,7 +4,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 
 
 
-RUN apt-get update && apt-get install -y \
+# Refresh the browser package layer on rebuilds. Chromium 150.0.7871.46
+# crashes on startup in Debian containers; the security update fixes it.
+RUN apt-get -o Acquire::Retries=3 update \
+    && apt-get install --no-install-recommends -y \
     build-essential \
     python3-dev \
     libpq-dev \

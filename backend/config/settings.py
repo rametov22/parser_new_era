@@ -158,6 +158,40 @@ REDIS_HOST = config("REDIS_HOST")
 REDIS_PORT = config("REDIS_PORT")
 REDIS_PASSWORD = config("REDIS_PASSWORD")
 
+# Shared proxy pool for both Vavada Celery workers. The password and the paid
+# proxy list live only in .env / the ignored proxy file, never in source code.
+VAVADA_PROXY_ENABLED = config("VAVADA_PROXY_ENABLED", cast=bool, default=False)
+VAVADA_PROXY_FILE = config("VAVADA_PROXY_FILE", default="")
+VAVADA_PROXY_URLS = config("VAVADA_PROXY_URLS", default="")
+VAVADA_PROXY_SCHEME = config("VAVADA_PROXY_SCHEME", default="http")
+VAVADA_PROXY_PORT = config("VAVADA_PROXY_PORT", default="")
+VAVADA_PROXY_USERNAME = config("VAVADA_PROXY_USERNAME", default="")
+VAVADA_PROXY_PASSWORD = config("VAVADA_PROXY_PASSWORD", default="")
+VAVADA_WD_TRUST_COOKIE = config("VAVADA_WD_TRUST_COOKIE", default="")
+VAVADA_WD_APPROVAL_COOKIE = config("VAVADA_WD_APPROVAL_COOKIE", default="")
+VAVADA_PROXY_REQUESTS_PER_IP = config(
+    "VAVADA_PROXY_REQUESTS_PER_IP", cast=int, default=1
+)
+VAVADA_PROXY_MIN_INTERVAL_SECONDS = config(
+    "VAVADA_PROXY_MIN_INTERVAL_SECONDS", cast=int, default=2
+)
+VAVADA_PROXY_CYCLE_COOLDOWN_SECONDS = config(
+    "VAVADA_PROXY_CYCLE_COOLDOWN_SECONDS", cast=int, default=10
+)
+VAVADA_PROXY_FAILURE_COOLDOWN_SECONDS = config(
+    "VAVADA_PROXY_FAILURE_COOLDOWN_SECONDS", cast=int, default=300
+)
+VAVADA_PROXY_LEASE_TTL_SECONDS = config(
+    "VAVADA_PROXY_LEASE_TTL_SECONDS", cast=int, default=300
+)
+VAVADA_PROXY_WAIT_TIMEOUT_SECONDS = config(
+    "VAVADA_PROXY_WAIT_TIMEOUT_SECONDS", cast=int, default=30
+)
+VAVADA_TASK_RATE_LIMIT = config("VAVADA_TASK_RATE_LIMIT", default="60/m")
+VAVADA_SERIALS_TASK_RATE_LIMIT = config(
+    "VAVADA_SERIALS_TASK_RATE_LIMIT", default="60/m"
+)
+
 # CACHE
 CACHES = {
     "default": {
@@ -192,6 +226,7 @@ CELERY_TASK_DEFAULT_QUEUE = "default"
 CELERY_TASK_ROUTES = {
     "apps.scrapers.tasks.vavada.parse_single_iframe": {"queue": "vavada_queue"},
     "apps.scrapers.tasks.vavada.spawn_iframe_parsers": {"queue": "default"},
+    "apps.scrapers.tasks.vavada.spawn_pirated_rechecks": {"queue": "default"},
     "apps.scrapers.tasks.vavada_serials.spawn_vavada_serials": {"queue": "default"},
     "apps.scrapers.tasks.vavada_serials.parse_vavada_serial": {"queue": "vavada_serials_queue"},
     "apps.scrapers.tasks.kinopoisk.parse_page_list_task": {"queue": "kp_pages_queue"},

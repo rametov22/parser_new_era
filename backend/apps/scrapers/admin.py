@@ -75,30 +75,6 @@ class ScraperLogAdmin(admin.ModelAdmin):
     search_fields = ("task_name",)
 
 
-@admin.register(models.VeoVeoContent)
-class VeoVeoContentAdmin(admin.ModelAdmin):
-    list_display = (
-        "veoveo_id",
-        "kinopoisk_id",
-        "title",
-        "content_type",
-        "is_available",
-        "last_season",
-        "last_episode",
-        "provider_updated_at",
-        "synced_at",
-    )
-    list_filter = ("is_available", "content_type", "video_quality")
-    search_fields = ("=veoveo_id", "=kinopoisk_id", "imdb_id", "title")
-    readonly_fields = (
-        "veoveo_id",
-        "provider_created_at",
-        "provider_updated_at",
-        "last_seen_at",
-        "synced_at",
-    )
-
-
 class HaveContentListFilter(admin.SimpleListFilter):
     title = _("have content ru")
 

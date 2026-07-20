@@ -192,6 +192,16 @@ VAVADA_SERIALS_TASK_RATE_LIMIT = config(
     "VAVADA_SERIALS_TASK_RATE_LIMIT", default="60/m"
 )
 
+# VEOVEO
+VEOVEO_API_TOKEN = config("VEOVEO_API_TOKEN", default="")
+VEOVEO_CATALOG_API_URL = config(
+    "VEOVEO_CATALOG_API_URL",
+    default="https://catalog-sync-api.rstprgapipt.com",
+)
+VEOVEO_REQUEST_TIMEOUT_SECONDS = config(
+    "VEOVEO_REQUEST_TIMEOUT_SECONDS", cast=int, default=60
+)
+
 # CACHE
 CACHES = {
     "default": {

@@ -34,7 +34,6 @@ from selenium.common.exceptions import TimeoutException, WebDriverException
 
 from ..models import Content, ScraperLog
 from ..chrome_utils import (
-    apply_vavada_trust_cookie,
     create_chrome_driver,
     quit_driver,
     get_chrome_count,
@@ -158,13 +157,7 @@ def parse_vavada_serial(self, kp_id):
         driver = create_chrome_driver(
             stealth=True,
             proxy_url=proxy_url,
-            allow_third_party_cookies=True,
         )
-        if apply_vavada_trust_cookie(driver):
-            logger.info(
-                f"[serial-debug] {kp_id} | wd_trust + partitioned "
-                "wd_approval installed"
-            )
 
         url = f"https://iframe.cloud/iframe/{kp_id}"
         try:
@@ -181,13 +174,7 @@ def parse_vavada_serial(self, kp_id):
             driver = create_chrome_driver(
                 stealth=True,
                 proxy_url=proxy_url,
-                allow_third_party_cookies=True,
             )
-            if apply_vavada_trust_cookie(driver):
-                logger.info(
-                    f"[serial-debug] {kp_id} | wd_trust + partitioned "
-                    "wd_approval installed on retry"
-                )
             try:
                 driver.get(url)
             except TimeoutException:

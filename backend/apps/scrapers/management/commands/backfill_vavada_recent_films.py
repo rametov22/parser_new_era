@@ -72,10 +72,6 @@ class Command(BaseCommand):
             raise CommandError(
                 "Для проверки одного IP передайте VAVADA_PROXY_ENABLED=false."
             )
-        if not settings.VAVADA_WD_TRUST_COOKIE:
-            raise CommandError("Не передан VAVADA_WD_TRUST_COOKIE.")
-        if not settings.VAVADA_WD_APPROVAL_COOKIE:
-            raise CommandError("Не передан VAVADA_WD_APPROVAL_COOKIE.")
         if total == 0:
             raise CommandError("Подходящие фильмы не найдены.")
 

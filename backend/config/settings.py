@@ -167,8 +167,6 @@ VAVADA_PROXY_SCHEME = config("VAVADA_PROXY_SCHEME", default="http")
 VAVADA_PROXY_PORT = config("VAVADA_PROXY_PORT", default="")
 VAVADA_PROXY_USERNAME = config("VAVADA_PROXY_USERNAME", default="")
 VAVADA_PROXY_PASSWORD = config("VAVADA_PROXY_PASSWORD", default="")
-VAVADA_WD_TRUST_COOKIE = config("VAVADA_WD_TRUST_COOKIE", default="")
-VAVADA_WD_APPROVAL_COOKIE = config("VAVADA_WD_APPROVAL_COOKIE", default="")
 VAVADA_PROXY_REQUESTS_PER_IP = config(
     "VAVADA_PROXY_REQUESTS_PER_IP", cast=int, default=1
 )
@@ -190,6 +188,28 @@ VAVADA_PROXY_WAIT_TIMEOUT_SECONDS = config(
 VAVADA_TASK_RATE_LIMIT = config("VAVADA_TASK_RATE_LIMIT", default="60/m")
 VAVADA_SERIALS_TASK_RATE_LIMIT = config(
     "VAVADA_SERIALS_TASK_RATE_LIMIT", default="60/m"
+)
+
+# VEOVEO CATALOG SYNC
+VEOVEO_API_TOKEN = config("VEOVEO_API_TOKEN", default="")
+VEOVEO_CATALOG_API_URL = config(
+    "VEOVEO_CATALOG_API_URL",
+    default="https://catalog-sync-api.rstprgapipt.com",
+)
+VEOVEO_REQUEST_TIMEOUT_SECONDS = config(
+    "VEOVEO_REQUEST_TIMEOUT_SECONDS", cast=int, default=60
+)
+VEOVEO_INCREMENTAL_PAGE_SIZE = config(
+    "VEOVEO_INCREMENTAL_PAGE_SIZE", cast=int, default=100
+)
+VEOVEO_SYNC_OVERLAP_SECONDS = config(
+    "VEOVEO_SYNC_OVERLAP_SECONDS", cast=int, default=300
+)
+VEOVEO_INITIAL_LOOKBACK_HOURS = config(
+    "VEOVEO_INITIAL_LOOKBACK_HOURS", cast=int, default=24
+)
+VEOVEO_SYNC_LOCK_TIMEOUT_SECONDS = config(
+    "VEOVEO_SYNC_LOCK_TIMEOUT_SECONDS", cast=int, default=1800
 )
 
 # CACHE
@@ -242,6 +262,7 @@ CELERY_TASK_ROUTES = {
     "apps.scrapers.tasks.yangitv.expire_yt_stuck": {"queue": "default"},
     "apps.scrapers.tasks.yangitv.retry_yt_failed": {"queue": "default"},
     "apps.scrapers.tasks.yangitv.refresh_kmax_yangi_cache": {"queue": "default"},
+    "apps.scrapers.tasks.veoveo.sync_veoveo_updates": {"queue": "default"},
 }
 
 PREMIERE = config("premiere", cast=int, default=40)

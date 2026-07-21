@@ -13,7 +13,6 @@ from bs4 import BeautifulSoup
 
 from ..models import Content, ScraperLog
 from ..chrome_utils import (
-    apply_vavada_trust_cookie,
     create_chrome_driver,
     quit_driver,
     get_chrome_count,
@@ -263,13 +262,7 @@ def parse_single_iframe(self, kp_id):
         driver = create_chrome_driver(
             stealth=True,
             proxy_url=proxy_url,
-            allow_third_party_cookies=True,
         )
-        if apply_vavada_trust_cookie(driver):
-            logger.info(
-                f"[vavada-debug] {kp_id} | wd_trust + partitioned "
-                "wd_approval installed"
-            )
 
         # Логика из check_and_pars_iframe
         url = f"https://iframe.cloud/iframe/{kp_id}"
@@ -289,13 +282,7 @@ def parse_single_iframe(self, kp_id):
             driver = create_chrome_driver(
                 stealth=True,
                 proxy_url=proxy_url,
-                allow_third_party_cookies=True,
             )
-            if apply_vavada_trust_cookie(driver):
-                logger.info(
-                    f"[vavada-debug] {kp_id} | wd_trust + partitioned "
-                    "wd_approval installed on retry"
-                )
             try:
                 driver.get(url)
             except TimeoutException:

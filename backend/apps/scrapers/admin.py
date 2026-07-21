@@ -75,6 +75,42 @@ class ScraperLogAdmin(admin.ModelAdmin):
     search_fields = ("task_name",)
 
 
+@admin.register(models.VeoVeoSyncState)
+class VeoVeoSyncStateAdmin(admin.ModelAdmin):
+    list_display = (
+        "key",
+        "status",
+        "cursor_at",
+        "last_finished_at",
+        "last_received",
+        "last_created",
+        "last_updated",
+    )
+    readonly_fields = (
+        "key",
+        "cursor_at",
+        "run_token",
+        "running_since",
+        "status",
+        "last_started_at",
+        "last_finished_at",
+        "last_from_updated_at",
+        "last_to_updated_at",
+        "last_pages",
+        "last_received",
+        "last_created",
+        "last_updated",
+        "last_error",
+        "updated_at",
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
 class HaveContentListFilter(admin.SimpleListFilter):
     title = _("have content ru")
 

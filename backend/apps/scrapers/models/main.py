@@ -18,6 +18,48 @@ class ScraperLog(models.Model):
         ]
 
 
+class VeoVeoSyncState(models.Model):
+    """Persistent cursor and diagnostics for incremental VeoVeo sync."""
+
+    STATUS_IDLE = "idle"
+    STATUS_RUNNING = "running"
+    STATUS_SUCCESS = "success"
+    STATUS_ERROR = "error"
+    STATUS_CHOICES = (
+        (STATUS_IDLE, "Idle"),
+        (STATUS_RUNNING, "Running"),
+        (STATUS_SUCCESS, "Success"),
+        (STATUS_ERROR, "Error"),
+    )
+
+    key = models.CharField(max_length=64, primary_key=True)
+    cursor_at = models.DateTimeField(null=True, blank=True)
+    run_token = models.UUIDField(null=True, blank=True)
+    running_since = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(
+        max_length=16,
+        choices=STATUS_CHOICES,
+        default=STATUS_IDLE,
+    )
+    last_started_at = models.DateTimeField(null=True, blank=True)
+    last_finished_at = models.DateTimeField(null=True, blank=True)
+    last_from_updated_at = models.DateTimeField(null=True, blank=True)
+    last_to_updated_at = models.DateTimeField(null=True, blank=True)
+    last_pages = models.PositiveIntegerField(default=0)
+    last_received = models.PositiveIntegerField(default=0)
+    last_created = models.PositiveIntegerField(default=0)
+    last_updated = models.PositiveIntegerField(default=0)
+    last_error = models.TextField(blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "VeoVeo sync state"
+        verbose_name_plural = "VeoVeo sync states"
+
+    def __str__(self):
+        return f"{self.key}: {self.status}"
+
+
 class YtConnectContent(models.Model):
     """
     Состояние парсинга yangi.tv. Живёт в main_db (см. router),

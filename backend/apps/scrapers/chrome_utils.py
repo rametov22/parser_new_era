@@ -203,7 +203,6 @@ def _build_options(
     user_data_dir: str,
     binary_path: str,
     proxy_url: str | None = None,
-    allow_third_party_cookies: bool = False,
 ) -> Options:
     """Собирает опции Chrome, оптимизированные для headless-парсинга в контейнере."""
     options = Options()
@@ -250,16 +249,10 @@ def _build_options(
 
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
-    prefs = {"intl.accept_languages": "ru,ru-RU,en-US,en"}
-    if allow_third_party_cookies:
-        prefs.update(
-            {
-                "profile.block_third_party_cookies": False,
-                "profile.cookie_controls_mode": 0,
-                "profile.default_content_setting_values.cookies": 1,
-            }
-        )
-    options.add_experimental_option("prefs", prefs)
+    options.add_experimental_option(
+        "prefs",
+        {"intl.accept_languages": "ru,ru-RU,en-US,en"},
+    )
 
     # User-agent совпадает с реальной версией Chrome.
     version = _chrome_version(binary_path)
@@ -277,7 +270,6 @@ def create_chrome_driver(
     page_load_timeout: int = 30,
     script_timeout: int = 30,
     proxy_url: str | None = None,
-    allow_third_party_cookies: bool = False,
 ):
     """
     Создаёт headless Chrome с максимальной стабильностью.
@@ -287,7 +279,6 @@ def create_chrome_driver(
         page_load_timeout: сколько секунд ждать загрузку страницы.
         script_timeout: сколько секунд ждать выполнение JS.
         proxy_url: HTTP(S)/SOCKS proxy URL, optionally with basic auth.
-        allow_third_party_cookies: разрешить обычные cookies в cross-site iframe.
     """
     kill_zombie_chrome()
 
@@ -299,7 +290,6 @@ def create_chrome_driver(
         user_data_dir,
         binary_path,
         proxy_url=proxy_url,
-        allow_third_party_cookies=allow_third_party_cookies,
     )
 
     service = Service(executable_path=chromedriver_path)
@@ -321,12 +311,6 @@ def create_chrome_driver(
     try:
         driver.set_page_load_timeout(page_load_timeout)
         driver.set_script_timeout(script_timeout)
-
-        if allow_third_party_cookies:
-            driver.execute_cdp_cmd(
-                "Network.setCookieControls",
-                {"enableThirdPartyCookieRestriction": False},
-            )
 
         if stealth:
             from selenium_stealth import stealth
@@ -353,61 +337,6 @@ def create_chrome_driver(
         raise
 
     return driver
-
-
-def apply_vavada_trust_cookie(driver) -> bool:
-    """Install private GreyWeb verification cookies before opening iframe.cloud."""
-    trust_value = str(
-        getattr(settings, "VAVADA_WD_TRUST_COOKIE", "") or ""
-    ).strip()
-    approval_value = str(
-        getattr(settings, "VAVADA_WD_APPROVAL_COOKIE", "") or ""
-    ).strip()
-    if not trust_value and not approval_value:
-        return False
-    if not trust_value or not approval_value:
-        raise WebDriverException(
-            "Both VAVADA_WD_TRUST_COOKIE and VAVADA_WD_APPROVAL_COOKIE are required"
-        )
-
-    cookies = (
-        {
-            "name": "wd_trust",
-            "value": trust_value,
-            "domain": ".obrut.show",
-            "path": "/",
-            "secure": True,
-            "httpOnly": True,
-            "sameSite": "None",
-            "priority": "High",
-        },
-        {
-            "name": "wd_approval",
-            "value": approval_value,
-            "domain": ".obrut.show",
-            "path": "/",
-            "secure": True,
-            "httpOnly": True,
-            "sameSite": "None",
-            "priority": "High",
-            "partitionKey": {
-                "topLevelSite": "https://iframe.cloud",
-                "hasCrossSiteAncestor": True,
-            },
-        },
-    )
-    for cookie in cookies:
-        result = driver.execute_cdp_cmd("Network.setCookie", cookie)
-        if result.get("success") is False:
-            raise WebDriverException(
-                f"Could not set Vavada {cookie['name']} cookie"
-            )
-
-    logger.info(
-        "[vavada-cookie] wd_trust + partitioned wd_approval applied "
-        "for .obrut.show"
-    )
-    return True
 
 
 def quit_driver(driver):

@@ -35,10 +35,6 @@ class Command(BaseCommand):
             raise CommandError(
                 "Для проверки одного IP передайте VAVADA_PROXY_ENABLED=false."
             )
-        if not settings.VAVADA_WD_TRUST_COOKIE:
-            raise CommandError("Не передан VAVADA_WD_TRUST_COOKIE.")
-        if not settings.VAVADA_WD_APPROVAL_COOKIE:
-            raise CommandError("Не передан VAVADA_WD_APPROVAL_COOKIE.")
 
         limit = max(1, min(options["limit"], 200))
         delay = max(0.0, options["delay"])

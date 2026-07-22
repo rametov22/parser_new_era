@@ -5,7 +5,7 @@ from django.conf import settings
 from celery import shared_task
 from django.utils import timezone
 from datetime import timedelta
-from django.db.models import Q
+from django.db.models import F, Q
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.common.exceptions import TimeoutException
@@ -69,6 +69,33 @@ VAVADA_QUEUE_THRESHOLD = 500
 VAVADA_IN_PROGRESS_STUCK_MINUTES = 30
 VAVADA_NO_PLAYER_RETRY_HOURS = 4
 VAVADA_PIRATED_RECHECK_HOURS = 24
+
+
+def _save_vavada_player_presence(film, kp_id, *, found_at=None):
+    """Persist a confirmed outer player before optional metadata parsing."""
+    found_at = found_at or timezone.now()
+    film.film_content = f"https://iframe.cloud/iframe/{kp_id}"
+    film.add_content_date = found_at.date()
+    film.last_update = found_at
+    film.save(
+        update_fields=[
+            "film_content",
+            "add_content_date",
+            "last_update",
+        ]
+    )
+
+
+def _finish_vavada_parse(film, *, parsed_at=None):
+    """Mark a claimed Vavada task successful exactly once."""
+    return Content.objects.filter(
+        pk=film.pk,
+        is_parsed_ru="in_progress",
+    ).update(
+        is_parsed_ru="parsed",
+        parsed_at_ru=parsed_at or timezone.now(),
+        parse_count_ru=F("parse_count_ru") + 1,
+    )
 
 
 def _vavada_queue_length():
@@ -324,10 +351,9 @@ def parse_single_iframe(self, kp_id):
             )
             return f"No player found for {kp_id}"
 
-        # Сохраняем основные данные
-        film.film_content = f"https://iframe.cloud/iframe/{kp_id}"
-        # https://vavada.video/iframe/
-        film.add_content_date = timezone.now().date()
+        # Сам плеер уже подтверждён прямым src в playerFrame.
+        # Сохраняем его до загрузки необязательного UI метаданных.
+        _save_vavada_player_presence(film, kp_id)
 
         # Переключаемся во фрейм для аудиодорожек
         logger.info(
@@ -356,16 +382,16 @@ def parse_single_iframe(self, kp_id):
                 f"[vavada] {kp_id} | player UI timeout "
                 f"(waf_challenge={waf_challenge})"
             )
-            checked_at = timezone.now()
-            film.is_parsed_ru = "not_parsed"
-            film.parsed_at_ru = checked_at
-            film.save(update_fields=["is_parsed_ru", "parsed_at_ru"])
+            _finish_vavada_parse(film)
             ScraperLog.objects.create(
                 task_name=f"Vavada parser {kp_id}",
                 status="success",
-                message=f"Player UI unavailable; waf_challenge={waf_challenge}",
+                message=(
+                    "Плеер сохранён; metadata UI unavailable; "
+                    f"waf_challenge={waf_challenge}"
+                ),
             )
-            return f"No player UI for {kp_id}"
+            return f"Player saved for {kp_id} (metadata UI unavailable)"
 
         time.sleep(3)
         soup = BeautifulSoup(driver.page_source, "lxml")
@@ -504,12 +530,7 @@ def parse_single_iframe(self, kp_id):
         # Атомарный финал: переводим в parsed + инкрементируем счётчик
         # ТОЛЬКО если статус ещё in_progress. При redelivery второй воркер
         # увидит уже "parsed" → UPDATE затронет 0 строк, дубля не будет.
-        from django.db.models import F as _F
-        Content.objects.filter(pk=film.pk, is_parsed_ru="in_progress").update(
-            is_parsed_ru="parsed",
-            parsed_at_ru=timezone.now(),
-            parse_count_ru=_F("parse_count_ru") + 1,
-        )
+        _finish_vavada_parse(film)
 
         exec_time = (timezone.now() - start_time).total_seconds()
         logger.info(

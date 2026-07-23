@@ -89,6 +89,19 @@ def _upsert_rows(rows, *, batch_size):
     return created, len(existing_ids)
 
 
+def _deactivate_missing_rows(sync_marker):
+    """Deactivate rows absent from a fully completed catalog snapshot."""
+
+    with transaction.atomic(using=MAIN_DB_ALIAS):
+        return VeoVeoContent.objects.filter(
+            is_available=True,
+            last_seen_at__lt=sync_marker,
+        ).update(
+            is_available=False,
+            synced_at=timezone.now(),
+        )
+
+
 def _finish_success(
     run_token,
     *,
@@ -131,7 +144,7 @@ def _finish_error(run_token, exc):
     )
 
 
-def run_veoveo_incremental_sync():
+def _validate_settings():
     token = settings.VEOVEO_API_TOKEN.strip()
     if not token:
         raise RuntimeError(
@@ -151,6 +164,19 @@ def run_veoveo_incremental_sync():
         raise RuntimeError(
             "VEOVEO_SYNC_LOCK_TIMEOUT_SECONDS must be positive."
         )
+    return token, page_size
+
+
+def _catalog_client(token):
+    return VeoVeoCatalogClient(
+        base_url=settings.VEOVEO_CATALOG_API_URL,
+        token=token,
+        timeout=settings.VEOVEO_REQUEST_TIMEOUT_SECONDS,
+    )
+
+
+def run_veoveo_incremental_sync():
+    token, page_size = _validate_settings()
 
     run_token, state = _claim_sync()
     if run_token is None:
@@ -176,11 +202,7 @@ def run_veoveo_incremental_sync():
             last_from_updated_at=window_start,
             last_to_updated_at=window_end,
         )
-        client = VeoVeoCatalogClient(
-            base_url=settings.VEOVEO_CATALOG_API_URL,
-            token=token,
-            timeout=settings.VEOVEO_REQUEST_TIMEOUT_SECONDS,
-        )
+        client = _catalog_client(token)
         logger.info(
             "[veoveo] incremental sync started: from=%s to=%s page_size=%s",
             window_start.isoformat(),
@@ -259,8 +281,126 @@ def run_veoveo_incremental_sync():
     }
 
 
+def run_veoveo_full_sync():
+    """Refresh the complete catalog and deactivate rows no longer returned."""
+
+    token, page_size = _validate_settings()
+    run_token, _state = _claim_sync()
+    if run_token is None:
+        logger.info("[veoveo] sync is already running, skipping full sync")
+        return {"status": "skipped", "reason": "already_running"}
+
+    sync_marker = timezone.now()
+    page_number = 1
+    pages = 0
+    received = 0
+    created = 0
+    updated = 0
+    deactivated = 0
+
+    try:
+        VeoVeoSyncState.objects.filter(
+            key=SYNC_STATE_KEY,
+            run_token=run_token,
+        ).update(
+            last_from_updated_at=None,
+            last_to_updated_at=sync_marker,
+        )
+        client = _catalog_client(token)
+        logger.info(
+            "[veoveo] full sync started: marker=%s page_size=%s",
+            sync_marker.isoformat(),
+            page_size,
+        )
+
+        while True:
+            page = client.get_details_page(
+                page=page_number,
+                page_size=page_size,
+            )
+            rows_by_id = {}
+            for item in page.items:
+                row = normalize_veoveo_content(item, seen_at=sync_marker)
+                rows_by_id[row["veoveo_id"]] = row
+            rows = list(rows_by_id.values())
+
+            page_created, page_updated = _upsert_rows(
+                rows,
+                batch_size=page_size,
+            )
+            pages += 1
+            received += len(rows)
+            created += page_created
+            updated += page_updated
+            logger.info(
+                "[veoveo] full page=%s/%s rows=%s created=%s "
+                "updated=%s total=%s",
+                page.page,
+                page.pages or "?",
+                len(rows),
+                page_created,
+                page_updated,
+                page.total,
+            )
+
+            if not page.has_next_page:
+                break
+            page_number += 1
+
+        if received:
+            deactivated = _deactivate_missing_rows(sync_marker)
+        else:
+            logger.warning(
+                "[veoveo] full sync returned an empty catalog; "
+                "existing rows were not deactivated"
+            )
+    except Exception as exc:
+        _finish_error(run_token, exc)
+        logger.exception("[veoveo] full sync failed on page %s", page_number)
+        raise
+
+    # Cursor points to the beginning of the snapshot. The next incremental run
+    # repeats the overlap and catches updates made while pages were fetched.
+    _finish_success(
+        run_token,
+        window_start=None,
+        window_end=sync_marker,
+        pages=pages,
+        received=received,
+        created=created,
+        updated=updated,
+    )
+    logger.info(
+        "[veoveo] full sync finished: pages=%s rows=%s created=%s "
+        "updated=%s deactivated=%s cursor=%s",
+        pages,
+        received,
+        created,
+        updated,
+        deactivated,
+        sync_marker.isoformat(),
+    )
+    return {
+        "status": "success",
+        "mode": "full",
+        "pages": pages,
+        "received": received,
+        "created": created,
+        "updated": updated,
+        "deactivated": deactivated,
+        "cursor_at": sync_marker.isoformat(),
+    }
+
+
 @shared_task(queue="default")
 def sync_veoveo_updates():
     """Upsert only VeoVeo rows changed inside the persisted time window."""
 
     return run_veoveo_incremental_sync()
+
+
+@shared_task(queue="default")
+def sync_veoveo_full_catalog():
+    """Reconcile the complete VeoVeo catalog and availability flags."""
+
+    return run_veoveo_full_sync()

@@ -508,8 +508,8 @@ def parse_single_iframe(self, kp_id):
         # чтобы атомарный финал проверил исходный статус "in_progress".
         film.player_id = int(variyt_player_id) if variyt_player_id else None
         film.player_variables = player_list
-        film.is_pirated = has_pirated_release(
-            filtered_audio_tracks or film.audio_tracks,
+        film.is_pirated = film.is_pirated_missing_veoveo or has_pirated_release(
+            filtered_audio_tracks or film.audio_tracks
         )
         film.last_update = timezone.now()
         film.save(

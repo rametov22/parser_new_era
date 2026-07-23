@@ -7,6 +7,7 @@ from django.utils import timezone
 from apps.scrapers.models import VeoVeoSyncState
 from apps.scrapers.tasks.veoveo import (
     SYNC_STATE_KEY,
+    run_veoveo_full_sync,
     run_veoveo_incremental_sync,
 )
 from apps.scrapers.veoveo_catalog import (
@@ -65,6 +66,44 @@ class VeoVeoCatalogTests(SimpleTestCase):
                     "order": "ASC",
                     "sortBy": "id",
                 },
+            },
+            timeout=12,
+        )
+
+    def test_client_omits_update_window_for_full_catalog(self):
+        session = Mock()
+        session.headers = {}
+        response = Mock()
+        response.json.return_value = {
+            "data": [],
+            "meta": {
+                "page": 1,
+                "pageSize": 100,
+                "total": 0,
+                "pages": 0,
+                "hasNextPage": False,
+            },
+        }
+        session.post.return_value = response
+        client = VeoVeoCatalogClient(
+            base_url="https://catalog.example/",
+            token="website-token",
+            timeout=12,
+            session=session,
+        )
+
+        client.get_details_page(page=1, page_size=100)
+
+        session.post.assert_called_once_with(
+            "https://catalog.example/v1/contents/details",
+            json={
+                "pagination": {
+                    "page": 1,
+                    "pageSize": 100,
+                    "type": "page",
+                    "order": "ASC",
+                    "sortBy": "id",
+                }
             },
             timeout=12,
         )
@@ -212,3 +251,92 @@ class VeoVeoIncrementalSyncTests(TestCase):
         self.assertEqual(state.status, VeoVeoSyncState.STATUS_ERROR)
         self.assertIsNone(state.run_token)
         self.assertIsNone(state.running_since)
+
+    @patch(
+        "apps.scrapers.tasks.veoveo._deactivate_missing_rows",
+        return_value=3,
+    )
+    @patch("apps.scrapers.tasks.veoveo._upsert_rows", return_value=(1, 0))
+    @patch("apps.scrapers.tasks.veoveo.VeoVeoCatalogClient")
+    def test_full_sync_advances_cursor_and_deactivates_missing_rows(
+        self,
+        client_class,
+        upsert_rows,
+        deactivate_missing_rows,
+    ):
+        client_class.return_value.get_details_page.return_value = (
+            VeoVeoCatalogPage(
+                items=[{"id": 99}],
+                page=1,
+                page_size=100,
+                total=1,
+                pages=1,
+                has_next_page=False,
+            )
+        )
+
+        result = run_veoveo_full_sync()
+
+        state = VeoVeoSyncState.objects.get(key=SYNC_STATE_KEY)
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["mode"], "full")
+        self.assertEqual(result["deactivated"], 3)
+        self.assertEqual(state.status, VeoVeoSyncState.STATUS_SUCCESS)
+        self.assertEqual(state.cursor_at, state.last_to_updated_at)
+        self.assertIsNone(state.last_from_updated_at)
+        upsert_rows.assert_called_once()
+        deactivate_missing_rows.assert_called_once()
+
+    @patch("apps.scrapers.tasks.veoveo._deactivate_missing_rows")
+    @patch("apps.scrapers.tasks.veoveo.VeoVeoCatalogClient")
+    def test_empty_full_sync_does_not_deactivate_existing_rows(
+        self,
+        client_class,
+        deactivate_missing_rows,
+    ):
+        client_class.return_value.get_details_page.return_value = (
+            VeoVeoCatalogPage(
+                items=[],
+                page=1,
+                page_size=100,
+                total=0,
+                pages=0,
+                has_next_page=False,
+            )
+        )
+
+        result = run_veoveo_full_sync()
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["received"], 0)
+        deactivate_missing_rows.assert_not_called()
+
+    @patch("apps.scrapers.tasks.veoveo._deactivate_missing_rows")
+    @patch("apps.scrapers.tasks.veoveo._upsert_rows", return_value=(1, 0))
+    @patch("apps.scrapers.tasks.veoveo.VeoVeoCatalogClient")
+    def test_failed_full_sync_never_deactivates_rows(
+        self,
+        client_class,
+        upsert_rows,
+        deactivate_missing_rows,
+    ):
+        client_class.return_value.get_details_page.side_effect = [
+            VeoVeoCatalogPage(
+                items=[{"id": 99}],
+                page=1,
+                page_size=100,
+                total=101,
+                pages=2,
+                has_next_page=True,
+            ),
+            RuntimeError("page two failed"),
+        ]
+
+        with self.assertRaisesMessage(RuntimeError, "page two failed"):
+            run_veoveo_full_sync()
+
+        state = VeoVeoSyncState.objects.get(key=SYNC_STATE_KEY)
+        self.assertEqual(state.status, VeoVeoSyncState.STATUS_ERROR)
+        self.assertIsNone(state.run_token)
+        upsert_rows.assert_called_once()
+        deactivate_missing_rows.assert_not_called()

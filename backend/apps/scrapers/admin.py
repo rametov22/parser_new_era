@@ -163,6 +163,7 @@ class ContentAdmin(admin.ModelAdmin):
         "kino_poisk_id",
         "is_serial",
         "is_pirated",
+        "is_pirated_missing_veoveo",
     )
     autocomplete_fields = (
         "countries",
@@ -176,6 +177,7 @@ class ContentAdmin(admin.ModelAdmin):
     list_filter = (
         "is_serial",
         "is_pirated",
+        "is_pirated_missing_veoveo",
         HaveContentListFilter,
         HaveEnglishContentListFilter,
         "is_parsed_kp",

@@ -72,12 +72,15 @@ class VeoVeoCatalogClient:
         *,
         page: int,
         page_size: int,
-        from_updated_at: datetime,
-        to_updated_at: datetime,
+        from_updated_at: datetime | None = None,
+        to_updated_at: datetime | None = None,
     ) -> VeoVeoCatalogPage:
+        if (from_updated_at is None) != (to_updated_at is None):
+            raise ValueError(
+                "from_updated_at and to_updated_at must be provided together"
+            )
+
         payload = {
-            "fromUpdatedAt": _api_datetime(from_updated_at),
-            "toUpdatedAt": _api_datetime(to_updated_at),
             "pagination": {
                 "page": page,
                 "pageSize": page_size,
@@ -86,6 +89,13 @@ class VeoVeoCatalogClient:
                 "sortBy": "id",
             },
         }
+        if from_updated_at is not None and to_updated_at is not None:
+            payload.update(
+                {
+                    "fromUpdatedAt": _api_datetime(from_updated_at),
+                    "toUpdatedAt": _api_datetime(to_updated_at),
+                }
+            )
 
         try:
             response = self.session.post(
@@ -135,6 +145,10 @@ class VeoVeoCatalogClient:
         if has_next_page and not items:
             raise VeoVeoCatalogDataError(
                 f"Page {page} is empty but hasNextPage is true"
+            )
+        if total and page == 1 and not items:
+            raise VeoVeoCatalogDataError(
+                "VeoVeo returned an empty first page for a non-empty catalog"
             )
 
         return VeoVeoCatalogPage(

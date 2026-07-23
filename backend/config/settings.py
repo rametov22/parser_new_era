@@ -235,6 +235,21 @@ CELERY_BEAT_SCHEDULE = {
         "task": "apps.scrapers.tasks.yangitv.refresh_kmax_yangi_cache",
         "schedule": crontab(minute=0, hour="*/6"),
     },
+    # Часто забираем только изменившиеся записи. Курсор хранится в
+    # VeoVeoSyncState, а overlap защищает от пограничных updatedAt.
+    "veoveo-sync-updates": {
+        "task": "apps.scrapers.tasks.veoveo.sync_veoveo_updates",
+        "schedule": crontab(minute="*/5"),
+    },
+    # Полный проход нужен для первой загрузки и для is_available=False у
+    # контента, который VeoVeo перестал возвращать.
+    "veoveo-full-catalog-sync": {
+        "task": "apps.scrapers.tasks.veoveo.sync_veoveo_full_catalog",
+        # Не ставим на минуту, кратную 5: иначе incremental и full одновременно
+        # борются за общую блокировку. Полный каталог большой, поэтому сверяем
+        # его раз в неделю; частые изменения всё равно приходят incremental.
+        "schedule": crontab(hour=3, minute=12, day_of_week=0),
+    },
 }
 
 # URL брокера и бэкенда
@@ -263,6 +278,7 @@ CELERY_TASK_ROUTES = {
     "apps.scrapers.tasks.yangitv.retry_yt_failed": {"queue": "default"},
     "apps.scrapers.tasks.yangitv.refresh_kmax_yangi_cache": {"queue": "default"},
     "apps.scrapers.tasks.veoveo.sync_veoveo_updates": {"queue": "default"},
+    "apps.scrapers.tasks.veoveo.sync_veoveo_full_catalog": {"queue": "default"},
 }
 
 PREMIERE = config("premiere", cast=int, default=40)

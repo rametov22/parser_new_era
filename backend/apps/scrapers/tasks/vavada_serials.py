@@ -406,8 +406,8 @@ def parse_vavada_serial(self, kp_id):
         )
 
         film.audio_tracks = filtered_audio_tracks
-        film.is_pirated = has_pirated_release(
-            filtered_audio_tracks,
+        film.is_pirated = film.is_pirated_missing_veoveo or has_pirated_release(
+            filtered_audio_tracks
         )
         film.last_season = new_last_season
         film.last_episode = new_last_episode

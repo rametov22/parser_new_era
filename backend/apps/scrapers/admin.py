@@ -111,6 +111,37 @@ class VeoVeoSyncStateAdmin(admin.ModelAdmin):
         return False
 
 
+@admin.register(models.VeoVeoContent)
+class VeoVeoContentAdmin(admin.ModelAdmin):
+    list_display = (
+        "veoveo_id",
+        "kinopoisk_id",
+        "title",
+        "content_type",
+        "video_quality",
+        "last_season",
+        "last_episode",
+        "provider_updated_at",
+        "is_available",
+    )
+    list_filter = (
+        "is_available",
+        "content_type",
+        "video_quality",
+        "is_lgbt",
+    )
+    search_fields = ("veoveo_id", "kinopoisk_id", "imdb_id", "title")
+    readonly_fields = tuple(
+        field.name for field in models.VeoVeoContent._meta.concrete_fields
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
 class HaveContentListFilter(admin.SimpleListFilter):
     title = _("have content ru")
 

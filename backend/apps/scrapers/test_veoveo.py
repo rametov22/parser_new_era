@@ -128,6 +128,7 @@ class VeoVeoCatalogTests(SimpleTestCase):
                     }
                 ],
                 "updatedAt": "2026-07-20T10:00:00Z",
+                "videoQuality": "WEB-DL",
                 "ageRestriction": "AGE_18",
                 "duration": 57,
             },
@@ -139,8 +140,36 @@ class VeoVeoCatalogTests(SimpleTestCase):
         self.assertEqual(normalized["content_type"], "series")
         self.assertEqual(normalized["last_season"], 8)
         self.assertEqual(normalized["last_episode"], 6)
+        self.assertEqual(normalized["video_quality"], "WEB-DL")
         self.assertEqual(normalized["age_restriction"], 18)
         self.assertEqual(normalized["duration"], 57)
+
+    def test_normalizes_quality_fallback(self):
+        seen_at = timezone.now()
+
+        normalized = normalize_veoveo_content(
+            {
+                "id": 78,
+                "quality": "TS",
+            },
+            seen_at=seen_at,
+        )
+
+        self.assertEqual(normalized["video_quality"], "TS")
+
+    def test_release_quality_wins_over_resolution_quality(self):
+        seen_at = timezone.now()
+
+        normalized = normalize_veoveo_content(
+            {
+                "id": 79,
+                "videoQuality": "HD",
+                "quality": "TS",
+            },
+            seen_at=seen_at,
+        )
+
+        self.assertEqual(normalized["video_quality"], "TS")
 
     def test_latest_episode_uses_all_voice_authors(self):
         result = derive_last_season_episode(

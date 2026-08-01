@@ -212,7 +212,7 @@ def normalize_veoveo_content(
         "content_type": _text(content_type, 32),
         "is_available": True,
         "player_url": _text(payload.get("playerUrl")),
-        "video_quality": _text(payload.get("videoQuality"), 32),
+        "video_quality": _veoveo_quality(payload),
         "duration": _non_negative_int(payload.get("duration")),
         "age_restriction": _age_restriction(payload.get("ageRestriction")),
         "audio_tracks_raw": _text(payload.get("audioTracks")),
@@ -331,6 +331,14 @@ def _provider_datetime(value: Any) -> datetime | None:
     if timezone.is_naive(parsed):
         return timezone.make_aware(parsed, timezone.get_current_timezone())
     return parsed
+
+
+def _veoveo_quality(payload: dict[str, Any]) -> str:
+    for key in ("quality", "videoQuality", "video_quality"):
+        value = _text(payload.get(key), 32)
+        if value:
+            return value
+    return ""
 
 
 def _text(value: Any, max_length: int | None = None) -> str:

@@ -28,6 +28,19 @@ class VeoVeoContent(models.Model):
     episodes_by_voice_authors = models.JSONField(default=list, blank=True)
     last_season = models.PositiveIntegerField(null=True, blank=True)
     last_episode = models.PositiveIntegerField(null=True, blank=True)
+    episode_previews = models.JSONField(default=list, blank=True)
+    episode_previews_synced_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+    )
+    episode_previews_error = models.TextField(blank=True)
+    episode_previews_downloaded_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+    )
+    episode_previews_download_error = models.TextField(blank=True)
 
     provider_created_at = models.DateTimeField(null=True, blank=True)
     provider_updated_at = models.DateTimeField(null=True, blank=True)

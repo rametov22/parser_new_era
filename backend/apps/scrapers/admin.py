@@ -121,6 +121,8 @@ class VeoVeoContentAdmin(admin.ModelAdmin):
         "video_quality",
         "last_season",
         "last_episode",
+        "episode_preview_stats",
+        "episode_preview_storage_stats",
         "provider_updated_at",
         "is_available",
     )
@@ -140,6 +142,27 @@ class VeoVeoContentAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+    @admin.display(description="Episode previews")
+    def episode_preview_stats(self, obj):
+        previews = obj.episode_previews if isinstance(obj.episode_previews, list) else []
+        with_preview = sum(
+            bool(item.get("preview_url"))
+            for item in previews
+            if isinstance(item, dict)
+        )
+        return f"{with_preview}/{len(previews)}" if previews else "—"
+
+    @admin.display(description="Episode previews S3")
+    def episode_preview_storage_stats(self, obj):
+        previews = obj.episode_previews if isinstance(obj.episode_previews, list) else []
+        with_preview = [
+            item
+            for item in previews
+            if isinstance(item, dict) and item.get("preview_url")
+        ]
+        stored = sum(bool(item.get("preview_storage_key")) for item in with_preview)
+        return f"{stored}/{len(with_preview)}" if with_preview else "—"
 
 
 class HaveContentListFilter(admin.SimpleListFilter):

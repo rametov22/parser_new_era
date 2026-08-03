@@ -19,10 +19,17 @@ logger = logging.getLogger(__name__)
 
 SYNC_STATE_KEY = "catalog_updates"
 MAIN_DB_ALIAS = "main_db"
+PREVIEW_SYNC_FIELDS = {
+    "episode_previews",
+    "episode_previews_download_error",
+    "episode_previews_downloaded_at",
+    "episode_previews_error",
+    "episode_previews_synced_at",
+}
 UPDATE_FIELDS = [
     field.name
     for field in VeoVeoContent._meta.concrete_fields
-    if not field.primary_key
+    if not field.primary_key and field.name not in PREVIEW_SYNC_FIELDS
 ]
 
 
@@ -396,11 +403,23 @@ def run_veoveo_full_sync():
 def sync_veoveo_updates():
     """Upsert only VeoVeo rows changed inside the persisted time window."""
 
-    return run_veoveo_incremental_sync()
+    result = run_veoveo_incremental_sync()
+    if result.get("status") == "success":
+        from .veoveo_previews import sync_veoveo_previews
+
+        preview_task = sync_veoveo_previews.delay()
+        result["preview_task_id"] = str(preview_task.id)
+    return result
 
 
 @shared_task(queue="default")
 def sync_veoveo_full_catalog():
     """Reconcile the complete VeoVeo catalog and availability flags."""
 
-    return run_veoveo_full_sync()
+    result = run_veoveo_full_sync()
+    if result.get("status") == "success":
+        from .veoveo_previews import sync_veoveo_previews
+
+        preview_task = sync_veoveo_previews.delay()
+        result["preview_task_id"] = str(preview_task.id)
+    return result

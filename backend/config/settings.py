@@ -211,6 +211,28 @@ VEOVEO_INITIAL_LOOKBACK_HOURS = config(
 VEOVEO_SYNC_LOCK_TIMEOUT_SECONDS = config(
     "VEOVEO_SYNC_LOCK_TIMEOUT_SECONDS", cast=int, default=1800
 )
+VEOVEO_EPISODE_PREVIEW_WORKERS = config(
+    "VEOVEO_EPISODE_PREVIEW_WORKERS", cast=int, default=8
+)
+VEOVEO_EPISODE_PREVIEW_DOWNLOAD_WORKERS = config(
+    "VEOVEO_EPISODE_PREVIEW_DOWNLOAD_WORKERS", cast=int, default=8
+)
+VEOVEO_EPISODE_PREVIEW_MAX_BYTES = config(
+    "VEOVEO_EPISODE_PREVIEW_MAX_BYTES", cast=int, default=5 * 1024 * 1024
+)
+VEOVEO_EPISODE_PREVIEW_ALLOWED_HOSTS = tuple(
+    host.strip().lower()
+    for host in config(
+        "VEOVEO_EPISODE_PREVIEW_ALLOWED_HOSTS",
+        default="video.mvapspdmpg.com",
+    ).split(",")
+    if host.strip()
+)
+VEOVEO_EPISODE_PIPELINE_LOCK_TIMEOUT_SECONDS = config(
+    "VEOVEO_EPISODE_PIPELINE_LOCK_TIMEOUT_SECONDS",
+    cast=int,
+    default=21600,
+)
 
 # CACHE
 CACHES = {
@@ -279,6 +301,7 @@ CELERY_TASK_ROUTES = {
     "apps.scrapers.tasks.yangitv.refresh_kmax_yangi_cache": {"queue": "default"},
     "apps.scrapers.tasks.veoveo.sync_veoveo_updates": {"queue": "default"},
     "apps.scrapers.tasks.veoveo.sync_veoveo_full_catalog": {"queue": "default"},
+    "apps.scrapers.tasks.veoveo_previews.sync_veoveo_previews": {"queue": "default"},
 }
 
 PREMIERE = config("premiere", cast=int, default=40)

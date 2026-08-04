@@ -228,6 +228,17 @@ VEOVEO_EPISODE_PREVIEW_ALLOWED_HOSTS = tuple(
     ).split(",")
     if host.strip()
 )
+
+# IMDb charts for Kmax collections
+IMDB_TOP_10_WEEK_URL = config(
+    "IMDB_TOP_10_WEEK_URL",
+    default="https://www.imdb.com/search/title/?moviemeter=%2C10&ref_=hm_tenup_sa_btn",
+)
+IMDB_REQUEST_TIMEOUT_SECONDS = config(
+    "IMDB_REQUEST_TIMEOUT_SECONDS",
+    cast=int,
+    default=30,
+)
 VEOVEO_EPISODE_PIPELINE_LOCK_TIMEOUT_SECONDS = config(
     "VEOVEO_EPISODE_PIPELINE_LOCK_TIMEOUT_SECONDS",
     cast=int,
@@ -272,6 +283,10 @@ CELERY_BEAT_SCHEDULE = {
         # его раз в неделю; частые изменения всё равно приходят incremental.
         "schedule": crontab(hour=3, minute=12, day_of_week=0),
     },
+    "imdb-top-10-week-sync": {
+        "task": "apps.scrapers.tasks.imdb_charts.sync_imdb_top_10_week",
+        "schedule": crontab(hour=4, minute=35),
+    },
 }
 
 # URL брокера и бэкенда
@@ -302,6 +317,7 @@ CELERY_TASK_ROUTES = {
     "apps.scrapers.tasks.veoveo.sync_veoveo_updates": {"queue": "default"},
     "apps.scrapers.tasks.veoveo.sync_veoveo_full_catalog": {"queue": "default"},
     "apps.scrapers.tasks.veoveo_previews.sync_veoveo_previews": {"queue": "default"},
+    "apps.scrapers.tasks.imdb_charts.sync_imdb_top_10_week": {"queue": "default"},
 }
 
 PREMIERE = config("premiere", cast=int, default=40)

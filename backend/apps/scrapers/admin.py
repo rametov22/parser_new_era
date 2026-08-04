@@ -165,6 +165,33 @@ class VeoVeoContentAdmin(admin.ModelAdmin):
         return f"{stored}/{len(with_preview)}" if with_preview else "—"
 
 
+@admin.register(models.ImdbChartEntry)
+class ImdbChartEntryAdmin(admin.ModelAdmin):
+    list_display = (
+        "chart_key",
+        "position",
+        "imdb_id",
+        "title",
+        "year",
+        "imdb_rating",
+        "vote_count",
+        "is_active",
+        "fetched_at",
+    )
+    list_filter = ("chart_key", "is_active", "year")
+    search_fields = ("imdb_id", "title")
+    readonly_fields = tuple(
+        field.name for field in models.ImdbChartEntry._meta.concrete_fields
+    )
+    ordering = ("chart_key", "position")
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
 class HaveContentListFilter(admin.SimpleListFilter):
     title = _("have content ru")
 

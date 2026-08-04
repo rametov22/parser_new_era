@@ -19,6 +19,11 @@ class Command(BaseCommand):
             help="Parse saved IMDb HTML instead of fetching imdb.com.",
         )
         parser.add_argument(
+            "--ids",
+            nargs="+",
+            help="Use explicit IMDb title ids instead of fetching imdb.com.",
+        )
+        parser.add_argument(
             "--no-kmax-push",
             action="store_true",
             help="Do not POST parsed ids to the Kmax internal cache endpoint.",
@@ -32,6 +37,7 @@ class Command(BaseCommand):
             result = sync_imdb_top_10_week_chart(
                 dry_run=options["dry_run"],
                 html=html,
+                imdb_ids=options["ids"],
                 push_to_kmax=not options["no_kmax_push"],
             )
         except Exception as exc:

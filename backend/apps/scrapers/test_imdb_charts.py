@@ -4,9 +4,13 @@ from unittest.mock import Mock, patch
 from django.test import SimpleTestCase
 
 from .imdb_charts import (
+    ImdbChartDataError,
     ImdbChartItem,
+    fetch_imdb_chart_html,
+    items_from_imdb_ids,
     parse_imdb_chart_items,
     refresh_kmax_imdb_top_10_cache,
+    sync_imdb_top_10_week_chart,
 )
 
 
@@ -61,6 +65,68 @@ class ImdbChartParserTests(SimpleTestCase):
 
         self.assertEqual([item.imdb_id for item in items], ["tt11111111", "tt22222222"])
         self.assertEqual([item.position for item in items], [1, 2])
+
+    @patch("apps.scrapers.imdb_charts.fetch_imdb_chart_html_with_browser")
+    @patch("apps.scrapers.imdb_charts._build_session")
+    def test_fetch_uses_browser_when_requests_gets_waf_challenge(
+        self,
+        build_session,
+        browser_fetch,
+    ):
+        response = Mock()
+        response.text = """
+        <script>
+          window.awsWafCookieDomainList = ['imdb.com'];
+        </script>
+        <script src="https://token.awswaf.com/challenge.js"></script>
+        <div id="challenge-container"></div>
+        """
+        response.raise_for_status.return_value = None
+        session = Mock()
+        session.get.return_value = response
+        build_session.return_value = session
+        browser_fetch.return_value = '<a href="/title/tt11111111/">one</a>'
+
+        with self.settings(
+            IMDB_BROWSER_FALLBACK_ENABLED=True,
+            IMDB_BROWSER_WAIT_SECONDS=7,
+        ):
+            html = fetch_imdb_chart_html("https://www.imdb.com/search/title/", timeout=30)
+
+        self.assertIn("tt11111111", html)
+        browser_fetch.assert_called_once_with(
+            "https://www.imdb.com/search/title/",
+            timeout=30,
+            wait_seconds=7,
+        )
+
+    def test_builds_items_from_explicit_ids(self):
+        items = items_from_imdb_ids(
+            [" tt11111111 ", "bad", "tt11111111", "tt22222222"]
+        )
+
+        self.assertEqual([item.imdb_id for item in items], ["tt11111111", "tt22222222"])
+        self.assertEqual([item.position for item in items], [1, 2])
+
+    @patch("apps.scrapers.imdb_charts.fetch_imdb_chart_html")
+    def test_uses_settings_fallback_ids_when_imdb_is_challenged(self, fetch):
+        fetch.side_effect = ImdbChartDataError(
+            "IMDb returned a challenge page instead of chart HTML"
+        )
+        with self.settings(
+            IMDB_TOP_10_WEEK_FALLBACK_IDS=("tt11111111", "tt22222222")
+        ):
+            result = sync_imdb_top_10_week_chart(
+                dry_run=True,
+                push_to_kmax=False,
+            )
+
+        self.assertEqual(result["source"], "fallback_ids")
+        self.assertEqual(
+            [item["imdb_id"] for item in result["items"]],
+            ["tt11111111", "tt22222222"],
+        )
+        self.assertIn("challenge", result["warning"])
 
     @patch("apps.scrapers.imdb_charts.KMAX_INTERNAL_URL", "https://kmax.example")
     @patch("apps.scrapers.imdb_charts.KMAX_INTERNAL_TOKEN", "secret")

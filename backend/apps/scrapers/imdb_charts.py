@@ -10,12 +10,16 @@ from django.conf import settings
 from django.db import connections, transaction
 from django.utils import timezone
 from requests.adapters import HTTPAdapter
+from selenium.common.exceptions import TimeoutException, WebDriverException
+from selenium.webdriver.support.ui import WebDriverWait
 from urllib3.util.retry import Retry
 
+from .chrome_utils import create_chrome_driver, quit_driver
 from .models import ImdbChartEntry
 
 
 IMDB_TOP_10_WEEK_CHART_KEY = "imdb_top_10_week"
+IMDB_ID_RE = re.compile(r"^tt\d+$")
 IMDB_TITLE_RE = re.compile(r"/title/(tt\d+)/")
 TITLE_POSITION_RE = re.compile(r"^\s*(\d+)\.\s*(.+?)\s*$")
 YEAR_RE = re.compile(r"\b(19\d{2}|20\d{2})\b")
@@ -68,7 +72,54 @@ def fetch_imdb_chart_html(url: str, *, timeout: int) -> str:
         raise ImdbChartDataError(
             f"IMDb chart returned empty response: status={response.status_code}"
         )
+    if _is_imdb_waf_challenge(response.text):
+        if not settings.IMDB_BROWSER_FALLBACK_ENABLED:
+            raise ImdbChartDataError(
+                "IMDb returned a challenge page instead of chart HTML"
+            )
+        return fetch_imdb_chart_html_with_browser(
+            url,
+            timeout=timeout,
+            wait_seconds=settings.IMDB_BROWSER_WAIT_SECONDS,
+        )
     return response.text
+
+
+def fetch_imdb_chart_html_with_browser(
+    url: str,
+    *,
+    timeout: int,
+    wait_seconds: int,
+) -> str:
+    driver = None
+    try:
+        driver = create_chrome_driver(
+            stealth=False,
+            page_load_timeout=timeout,
+            script_timeout=timeout,
+        )
+        driver.get(url)
+        WebDriverWait(
+            driver,
+            wait_seconds,
+            poll_frequency=2,
+        ).until(lambda browser: IMDB_TITLE_RE.search(browser.page_source or ""))
+        html = driver.page_source or ""
+    except TimeoutException as exc:
+        html = driver.page_source if driver else ""
+        raise ImdbChartDataError(
+            "IMDb browser fetch did not reach chart HTML: "
+            f"html_len={len(html)} "
+            f"waf_challenge={_is_imdb_waf_challenge(html)}"
+        ) from exc
+    except WebDriverException as exc:
+        raise ImdbChartError(f"IMDb browser fetch failed: {exc}") from exc
+    finally:
+        quit_driver(driver)
+
+    if not html.strip():
+        raise ImdbChartDataError("IMDb browser returned empty page source")
+    return html
 
 
 def parse_imdb_chart_items(html: str, *, limit: int = 10) -> list[ImdbChartItem]:
@@ -108,20 +159,35 @@ def sync_imdb_top_10_week_chart(
     *,
     dry_run: bool = False,
     html: str | None = None,
+    imdb_ids: list[str] | tuple[str, ...] | None = None,
     push_to_kmax: bool = True,
 ) -> dict[str, Any]:
     url = settings.IMDB_TOP_10_WEEK_URL
-    if html is None:
-        html = fetch_imdb_chart_html(
-            url,
-            timeout=settings.IMDB_REQUEST_TIMEOUT_SECONDS,
-        )
-    items = parse_imdb_chart_items(html, limit=10)
+    source = "manual_ids" if imdb_ids is not None else "imdb"
+    warning = ""
+    if imdb_ids is not None:
+        items = items_from_imdb_ids(imdb_ids)
+    else:
+        try:
+            if html is None:
+                html = fetch_imdb_chart_html(
+                    url,
+                    timeout=settings.IMDB_REQUEST_TIMEOUT_SECONDS,
+                )
+            items = parse_imdb_chart_items(html, limit=10)
+        except ImdbChartError as exc:
+            items, source = _fallback_items()
+            if not items:
+                raise
+            warning = str(exc)
+
     if dry_run:
         return {
             "status": "success",
             "dry_run": True,
             "chart_key": IMDB_TOP_10_WEEK_CHART_KEY,
+            "source": source,
+            "warning": warning,
             "items": [_raw_item_data(item) for item in items],
         }
 
@@ -134,6 +200,8 @@ def sync_imdb_top_10_week_chart(
         "status": "success",
         "dry_run": False,
         "chart_key": IMDB_TOP_10_WEEK_CHART_KEY,
+        "source": source,
+        "warning": warning,
         "received": len(items),
         "saved": saved,
         "imdb_ids": [item.imdb_id for item in items],
@@ -245,6 +313,69 @@ def upsert_imdb_chart_items(
     return saved
 
 
+def items_from_imdb_ids(values: list[str] | tuple[str, ...]) -> list[ImdbChartItem]:
+    items = []
+    for imdb_id in normalize_imdb_ids(values):
+        items.append(ImdbChartItem(imdb_id=imdb_id, position=len(items) + 1))
+        if len(items) >= 10:
+            break
+    if not items:
+        raise ImdbChartDataError("IMDb fallback ids are empty")
+    return items
+
+
+def normalize_imdb_ids(values) -> list[str]:
+    imdb_ids = []
+    seen = set()
+    for value in values or []:
+        imdb_id = str(value or "").strip()
+        if not IMDB_ID_RE.match(imdb_id) or imdb_id in seen:
+            continue
+        seen.add(imdb_id)
+        imdb_ids.append(imdb_id)
+    return imdb_ids
+
+
+def active_imdb_chart_items(
+    *,
+    chart_key: str = IMDB_TOP_10_WEEK_CHART_KEY,
+) -> list[ImdbChartItem]:
+    _ensure_imdb_chart_table()
+    entries = (
+        ImdbChartEntry.objects.filter(chart_key=chart_key, is_active=True)
+        .order_by("position", "id")[:10]
+    )
+    return [
+        ImdbChartItem(
+            imdb_id=entry.imdb_id,
+            position=entry.position,
+            title=entry.title,
+            year=entry.year,
+            imdb_rating=entry.imdb_rating,
+            vote_count=entry.vote_count,
+            href=(
+                entry.raw_data.get("href", "")
+                if isinstance(entry.raw_data, dict)
+                else ""
+            ),
+        )
+        for entry in entries
+    ]
+
+
+def _fallback_items() -> tuple[list[ImdbChartItem], str]:
+    fallback_ids = normalize_imdb_ids(
+        getattr(settings, "IMDB_TOP_10_WEEK_FALLBACK_IDS", ())
+    )
+    if fallback_ids:
+        return items_from_imdb_ids(fallback_ids), "fallback_ids"
+
+    cached_items = active_imdb_chart_items()
+    if cached_items:
+        return cached_items, "cached"
+    return [], ""
+
+
 def _parse_summary_item(node, *, default_position: int) -> ImdbChartItem | None:
     href = ""
     imdb_id = ""
@@ -345,6 +476,15 @@ def _build_session() -> requests.Session:
     )
     session.mount("https://", HTTPAdapter(max_retries=retry))
     return session
+
+
+def _is_imdb_waf_challenge(html: str) -> bool:
+    lowered = (html or "").lower()
+    return (
+        "awswafcookiedomainlist" in lowered
+        or "token.awswaf.com" in lowered
+        or "challenge-container" in lowered
+    )
 
 
 def _text(node) -> str:

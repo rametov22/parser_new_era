@@ -234,10 +234,27 @@ IMDB_TOP_10_WEEK_URL = config(
     "IMDB_TOP_10_WEEK_URL",
     default="https://www.imdb.com/search/title/?moviemeter=%2C10&ref_=hm_tenup_sa_btn",
 )
+IMDB_TOP_10_WEEK_FALLBACK_IDS = tuple(
+    imdb_id.strip()
+    for imdb_id in config("IMDB_TOP_10_WEEK_FALLBACK_IDS", default="")
+    .replace("\n", ",")
+    .split(",")
+    if imdb_id.strip()
+)
 IMDB_REQUEST_TIMEOUT_SECONDS = config(
     "IMDB_REQUEST_TIMEOUT_SECONDS",
     cast=int,
     default=30,
+)
+IMDB_BROWSER_FALLBACK_ENABLED = config(
+    "IMDB_BROWSER_FALLBACK_ENABLED",
+    cast=bool,
+    default=True,
+)
+IMDB_BROWSER_WAIT_SECONDS = config(
+    "IMDB_BROWSER_WAIT_SECONDS",
+    cast=int,
+    default=45,
 )
 VEOVEO_EPISODE_PIPELINE_LOCK_TIMEOUT_SECONDS = config(
     "VEOVEO_EPISODE_PIPELINE_LOCK_TIMEOUT_SECONDS",

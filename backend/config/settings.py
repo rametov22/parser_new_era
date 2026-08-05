@@ -224,9 +224,26 @@ VEOVEO_EPISODE_PREVIEW_ALLOWED_HOSTS = tuple(
     host.strip().lower()
     for host in config(
         "VEOVEO_EPISODE_PREVIEW_ALLOWED_HOSTS",
-        default="video.mvapspdmpg.com",
+        default="video.mvapspdmpg.com,image.tmdb.org",
     ).split(",")
     if host.strip()
+)
+TMDB_EPISODE_PREVIEW_ENABLED = config(
+    "TMDB_EPISODE_PREVIEW_ENABLED", cast=bool, default=True
+)
+TMDB_API_KEY = config("TMDB_API_KEY", default="")
+TMDB_READ_ACCESS_TOKEN = config("TMDB_READ_ACCESS_TOKEN", default="")
+TMDB_API_BASE_URL = config(
+    "TMDB_API_BASE_URL",
+    default="https://api.themoviedb.org/3",
+)
+TMDB_IMAGE_BASE_URL = config(
+    "TMDB_IMAGE_BASE_URL",
+    default="https://image.tmdb.org/t/p/original",
+)
+TMDB_LANGUAGE = config("TMDB_LANGUAGE", default="ru-RU")
+TMDB_EPISODE_PREVIEW_MAX_MISSING_PER_CONTENT = config(
+    "TMDB_EPISODE_PREVIEW_MAX_MISSING_PER_CONTENT", cast=int, default=200
 )
 
 # IMDb charts for Kmax collections

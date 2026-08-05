@@ -19,14 +19,34 @@ class Command(BaseCommand):
             default=0,
             help="Process at most N serials in each stage; 0 means all.",
         )
+        parser.add_argument(
+            "--kp-id",
+            type=int,
+            default=None,
+            help="Process only one content by Kinopoisk ID.",
+        )
+        parser.add_argument(
+            "--veoveo-id",
+            type=int,
+            default=None,
+            help="Process only one VeoVeo content ID.",
+        )
 
     def handle(self, *args, **options):
         if options["limit"] < 0:
             raise CommandError("--limit cannot be negative")
+        if options["kp_id"] is not None and options["kp_id"] <= 0:
+            raise CommandError("--kp-id must be positive")
+        if options["veoveo_id"] is not None and options["veoveo_id"] <= 0:
+            raise CommandError("--veoveo-id must be positive")
+        if options["kp_id"] is not None and options["veoveo_id"] is not None:
+            raise CommandError("--kp-id and --veoveo-id cannot be used together")
         try:
             result = run_veoveo_preview_pipeline(
                 force=options["force"],
                 limit=options["limit"],
+                kp_id=options["kp_id"],
+                veoveo_id=options["veoveo_id"],
             )
         except Exception as exc:
             raise CommandError(f"VeoVeo preview sync failed: {exc}") from exc

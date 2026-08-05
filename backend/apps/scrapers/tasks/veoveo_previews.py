@@ -11,6 +11,11 @@ from django.db.models import F, Q
 from django.utils import timezone
 
 from ..models import VeoVeoContent, VeoVeoSyncState
+from ..tmdb_episode_previews import (
+    TMDbEpisodePreviewClient,
+    TMDbEpisodePreviewError,
+    add_episode_placeholders,
+)
 from ..veoveo_episode_preview_storage import (
     STORAGE_FIELDS,
     EpisodePreviewStorageClient,
@@ -116,7 +121,21 @@ def _finish_preview_pipeline_error(run_token, exc):
     )
 
 
-def run_veoveo_episode_preview_sync(*, force=False, limit=0):
+def _apply_target_filter(queryset, *, kp_id=None, veoveo_id=None):
+    if kp_id is not None:
+        return queryset.filter(kinopoisk_id=kp_id)
+    if veoveo_id is not None:
+        return queryset.filter(veoveo_id=veoveo_id)
+    return queryset
+
+
+def run_veoveo_episode_preview_sync(
+    *,
+    force=False,
+    limit=0,
+    kp_id=None,
+    veoveo_id=None,
+):
     queryset = (
         VeoVeoContent.objects.using(MAIN_DB_ALIAS)
         .filter(is_available=True)
@@ -128,6 +147,7 @@ def run_veoveo_episode_preview_sync(*, force=False, limit=0):
         )
         .order_by("veoveo_id")
     )
+    queryset = _apply_target_filter(queryset, kp_id=kp_id, veoveo_id=veoveo_id)
     if not force:
         queryset = queryset.filter(
             Q(episode_previews_synced_at__isnull=True)
@@ -135,9 +155,11 @@ def run_veoveo_episode_preview_sync(*, force=False, limit=0):
         )
     rows = queryset.values(
         "veoveo_id",
+        "imdb_id",
         "player_url",
         "episode_previews",
         "episode_previews_downloaded_at",
+        "episodes_by_season",
     )
     if limit:
         rows = rows[:limit]
@@ -148,6 +170,7 @@ def run_veoveo_episode_preview_sync(*, force=False, limit=0):
             "updated": 0,
             "episodes": 0,
             "previews": 0,
+            "tmdb_previews": 0,
             "unavailable": 0,
             "errors": 0,
         }
@@ -161,15 +184,48 @@ def run_veoveo_episode_preview_sync(*, force=False, limit=0):
                 timeout=settings.VEOVEO_REQUEST_TIMEOUT_SECONDS,
             )
             thread_state.client = client
-        return client.get_episode_previews(
+        previews = client.get_episode_previews(
             veoveo_id=row["veoveo_id"],
             player_url=row["player_url"],
         )
+        previews = add_episode_placeholders(
+            previews,
+            row["episodes_by_season"],
+            max_episodes=settings.TMDB_EPISODE_PREVIEW_MAX_MISSING_PER_CONTENT,
+        )
+        tmdb_filled = 0
+        if settings.TMDB_EPISODE_PREVIEW_ENABLED:
+            tmdb_client = getattr(thread_state, "tmdb_client", None)
+            if tmdb_client is None:
+                tmdb_client = TMDbEpisodePreviewClient(
+                    api_key=settings.TMDB_API_KEY,
+                    read_access_token=settings.TMDB_READ_ACCESS_TOKEN,
+                    api_base_url=settings.TMDB_API_BASE_URL,
+                    image_base_url=settings.TMDB_IMAGE_BASE_URL,
+                    language=settings.TMDB_LANGUAGE,
+                    timeout=settings.VEOVEO_REQUEST_TIMEOUT_SECONDS,
+                )
+                thread_state.tmdb_client = tmdb_client
+            try:
+                previews, tmdb_filled = tmdb_client.fill_missing_episode_previews(
+                    imdb_id=row["imdb_id"],
+                    previews=previews,
+                    max_missing=settings.TMDB_EPISODE_PREVIEW_MAX_MISSING_PER_CONTENT,
+                )
+            except TMDbEpisodePreviewError as exc:
+                logger.info(
+                    "[veoveo-previews] TMDb fallback skipped id=%s imdb=%s: %s",
+                    row["veoveo_id"],
+                    row["imdb_id"],
+                    exc,
+                )
+        return previews, tmdb_filled
 
     processed = 0
     updated = 0
     episodes = 0
     previews_found = 0
+    tmdb_previews_found = 0
     unavailable = 0
     errors = 0
     row_iterator = rows.iterator(chunk_size=100)
@@ -195,7 +251,7 @@ def run_veoveo_episode_preview_sync(*, force=False, limit=0):
                 veoveo_id = row["veoveo_id"]
                 processed += 1
                 try:
-                    previews = future.result()
+                    previews, tmdb_filled = future.result()
                 except VeoVeoEpisodePreviewNotFound as exc:
                     unavailable += 1
                     VeoVeoContent.objects.using(MAIN_DB_ALIAS).filter(
@@ -241,16 +297,18 @@ def run_veoveo_episode_preview_sync(*, force=False, limit=0):
                     previews_found += sum(
                         bool(item.get("preview_url")) for item in previews
                     )
+                    tmdb_previews_found += tmdb_filled
 
                 if processed % PROGRESS_EVERY == 0 or processed == total:
                     logger.info(
                         "[veoveo-previews] metadata %s/%s updated=%s "
-                        "episodes=%s previews=%s unavailable=%s errors=%s",
+                        "episodes=%s previews=%s tmdb=%s unavailable=%s errors=%s",
                         processed,
                         total,
                         updated,
                         episodes,
                         previews_found,
+                        tmdb_previews_found,
                         unavailable,
                         errors,
                     )
@@ -266,6 +324,7 @@ def run_veoveo_episode_preview_sync(*, force=False, limit=0):
         "updated": updated,
         "episodes": episodes,
         "previews": previews_found,
+        "tmdb_previews": tmdb_previews_found,
         "unavailable": unavailable,
         "errors": errors,
     }
@@ -321,7 +380,13 @@ def _download_preview_row(row, client, known_keys):
     }
 
 
-def run_veoveo_episode_preview_download(*, force=False, limit=0):
+def run_veoveo_episode_preview_download(
+    *,
+    force=False,
+    limit=0,
+    kp_id=None,
+    veoveo_id=None,
+):
     queryset = (
         VeoVeoContent.objects.using(MAIN_DB_ALIAS)
         .filter(
@@ -331,6 +396,7 @@ def run_veoveo_episode_preview_download(*, force=False, limit=0):
         .exclude(episode_previews=[])
         .order_by("veoveo_id")
     )
+    queryset = _apply_target_filter(queryset, kp_id=kp_id, veoveo_id=veoveo_id)
     if not force:
         queryset = queryset.filter(
             Q(episode_previews_downloaded_at__isnull=True)
@@ -471,20 +537,35 @@ def run_veoveo_episode_preview_download(*, force=False, limit=0):
     }
 
 
-def run_veoveo_preview_pipeline(*, force=False, limit=0):
+def run_veoveo_preview_pipeline(
+    *,
+    force=False,
+    limit=0,
+    kp_id=None,
+    veoveo_id=None,
+):
     _validate_preview_settings()
     if limit < 0:
         raise ValueError("limit cannot be negative")
+    if kp_id is not None and veoveo_id is not None:
+        raise ValueError("kp_id and veoveo_id cannot be used together")
     run_token = _claim_preview_pipeline()
     if run_token is None:
         logger.info("[veoveo-previews] pipeline already running; skipping")
         return {"status": "skipped", "reason": "already_running"}
 
     try:
-        metadata = run_veoveo_episode_preview_sync(force=force, limit=limit)
+        metadata = run_veoveo_episode_preview_sync(
+            force=force,
+            limit=limit,
+            kp_id=kp_id,
+            veoveo_id=veoveo_id,
+        )
         downloads = run_veoveo_episode_preview_download(
             force=force,
             limit=limit,
+            kp_id=kp_id,
+            veoveo_id=veoveo_id,
         )
     except Exception as exc:
         _finish_preview_pipeline_error(run_token, exc)

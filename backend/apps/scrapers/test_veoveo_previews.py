@@ -19,6 +19,10 @@ from apps.scrapers.tasks.veoveo_previews import (
     _download_preview_row,
     run_veoveo_preview_pipeline,
 )
+from apps.scrapers.tmdb_episode_previews import (
+    TMDbEpisodePreviewClient,
+    add_episode_placeholders,
+)
 from apps.scrapers.veoveo_episode_preview_storage import (
     EpisodePreviewStorageClient,
     StoredEpisodePreview,
@@ -219,6 +223,78 @@ class VeoVeoPreviewServiceTests(SimpleTestCase):
         self.assertIn("preview_storage_key", result["previews"][0])
         self.assertNotIn("preview_storage_key", result["previews"][1])
 
+    def test_tmdb_fill_missing_keeps_existing_veoveo_previews(self):
+        find_response = Mock()
+        find_response.json.return_value = {"tv_results": [{"id": 1399}]}
+        first_episode_response = Mock()
+        first_episode_response.json.return_value = {
+            "stills": [{"file_path": "/got-s1e1.jpg", "vote_average": 7.0}]
+        }
+        third_episode_response = Mock()
+        third_episode_response.json.return_value = {
+            "stills": [{"file_path": "/got-s1e3.jpg", "vote_average": 8.0}]
+        }
+        session = Mock()
+        session.get.side_effect = [
+            find_response,
+            first_episode_response,
+            third_episode_response,
+        ]
+        client = TMDbEpisodePreviewClient(
+            api_key="tmdb-key",
+            timeout=10,
+            session=session,
+        )
+
+        previews, filled = client.fill_missing_episode_previews(
+            imdb_id="tt0944947",
+            previews=[
+                {"season": 1, "episode": 1, "preview_url": None},
+                {
+                    "season": 1,
+                    "episode": 2,
+                    "preview_url": "https://video.example/veoveo-s1e2.jpg",
+                },
+                {"season": 1, "episode": 3, "preview_url": None},
+            ],
+            max_missing=10,
+        )
+
+        self.assertEqual(filled, 2)
+        self.assertEqual(
+            previews[0]["preview_url"],
+            "https://image.tmdb.org/t/p/original/got-s1e1.jpg",
+        )
+        self.assertEqual(
+            previews[1]["preview_url"],
+            "https://video.example/veoveo-s1e2.jpg",
+        )
+        self.assertNotIn("preview_source", previews[1])
+        self.assertEqual(previews[2]["preview_source"], "tmdb")
+        self.assertEqual(session.get.call_count, 3)
+
+    def test_episode_placeholders_fill_missing_orders_from_veoveo_counts(self):
+        result = add_episode_placeholders(
+            [
+                {
+                    "season": 1,
+                    "episode": 2,
+                    "preview_url": "https://video.example/veoveo-s1e2.jpg",
+                }
+            ],
+            {"1": 3, "2": 2},
+            max_episodes=10,
+        )
+
+        self.assertEqual(
+            [(item["season"], item["episode"]) for item in result],
+            [(1, 1), (1, 2), (1, 3), (2, 1), (2, 2)],
+        )
+        self.assertEqual(
+            result[1]["preview_url"],
+            "https://video.example/veoveo-s1e2.jpg",
+        )
+
 
 @override_settings(**PREVIEW_SETTINGS)
 class VeoVeoPreviewPipelineTests(TestCase):
@@ -255,8 +331,59 @@ class VeoVeoPreviewPipelineTests(TestCase):
         self.assertEqual(state.status, VeoVeoSyncState.STATUS_SUCCESS)
         self.assertIsNone(state.run_token)
         self.assertEqual(state.last_created, 8)
-        metadata_sync.assert_called_once_with(force=False, limit=0)
-        download_sync.assert_called_once_with(force=False, limit=0)
+        metadata_sync.assert_called_once_with(
+            force=False,
+            limit=0,
+            kp_id=None,
+            veoveo_id=None,
+        )
+        download_sync.assert_called_once_with(
+            force=False,
+            limit=0,
+            kp_id=None,
+            veoveo_id=None,
+        )
+
+    @patch("apps.scrapers.tasks.veoveo_previews.run_veoveo_episode_preview_download")
+    @patch("apps.scrapers.tasks.veoveo_previews.run_veoveo_episode_preview_sync")
+    def test_pipeline_passes_target_filter_to_both_stages(
+        self,
+        metadata_sync,
+        download_sync,
+    ):
+        metadata_sync.return_value = {
+            "processed": 1,
+            "updated": 1,
+            "episodes": 10,
+            "previews": 10,
+            "tmdb_previews": 8,
+            "unavailable": 0,
+            "errors": 0,
+        }
+        download_sync.return_value = {
+            "processed": 1,
+            "completed": 1,
+            "downloaded": 8,
+            "reused": 0,
+            "skipped": 2,
+            "errors": 0,
+        }
+
+        result = run_veoveo_preview_pipeline(force=True, kp_id=464963)
+
+        self.assertEqual(result["status"], "success")
+        metadata_sync.assert_called_once_with(
+            force=True,
+            limit=0,
+            kp_id=464963,
+            veoveo_id=None,
+        )
+        download_sync.assert_called_once_with(
+            force=True,
+            limit=0,
+            kp_id=464963,
+            veoveo_id=None,
+        )
 
     @patch("apps.scrapers.tasks.veoveo_previews.run_veoveo_episode_preview_download")
     @patch("apps.scrapers.tasks.veoveo_previews.run_veoveo_episode_preview_sync")

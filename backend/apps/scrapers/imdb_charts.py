@@ -214,6 +214,8 @@ def sync_imdb_top_10_week_chart(
 def refresh_kmax_imdb_top_10_cache(items: list[ImdbChartItem]) -> dict[str, Any] | str:
     if not KMAX_INTERNAL_URL or not KMAX_INTERNAL_TOKEN:
         return "skipped"
+    if not items:
+        return "skipped_empty"
 
     url = (
         f"{KMAX_INTERNAL_URL.rstrip('/')}"

@@ -273,6 +273,50 @@ class VeoVeoPreviewServiceTests(SimpleTestCase):
         self.assertEqual(previews[2]["preview_source"], "tmdb")
         self.assertEqual(session.get.call_count, 3)
 
+    def test_tmdb_fill_missing_ignores_missing_episode_and_continues(self):
+        find_response = Mock()
+        find_response.json.return_value = {"tv_results": [{"id": 1399}]}
+        first_episode_response = Mock()
+        first_episode_response.json.return_value = {
+            "stills": [{"file_path": "/got-s1e1.jpg", "vote_average": 7.0}]
+        }
+        missing_episode_response = Mock(status_code=404)
+        missing_episode_response.raise_for_status.side_effect = requests.HTTPError(
+            response=missing_episode_response
+        )
+        third_episode_response = Mock()
+        third_episode_response.json.return_value = {
+            "stills": [{"file_path": "/got-s1e3.jpg", "vote_average": 8.0}]
+        }
+        session = Mock()
+        session.get.side_effect = [
+            find_response,
+            first_episode_response,
+            missing_episode_response,
+            third_episode_response,
+        ]
+        client = TMDbEpisodePreviewClient(
+            api_key="tmdb-key",
+            timeout=10,
+            session=session,
+        )
+
+        previews, filled = client.fill_missing_episode_previews(
+            imdb_id="tt0944947",
+            previews=[
+                {"season": 1, "episode": 1, "preview_url": None},
+                {"season": 8, "episode": 7, "preview_url": None},
+                {"season": 1, "episode": 3, "preview_url": None},
+            ],
+            max_missing=10,
+        )
+
+        self.assertEqual(filled, 2)
+        self.assertEqual(previews[0]["preview_source"], "tmdb")
+        self.assertIsNone(previews[1].get("preview_url"))
+        self.assertEqual(previews[2]["preview_source"], "tmdb")
+        self.assertEqual(session.get.call_count, 4)
+
     def test_episode_placeholders_fill_missing_orders_from_veoveo_counts(self):
         result = add_episode_placeholders(
             [

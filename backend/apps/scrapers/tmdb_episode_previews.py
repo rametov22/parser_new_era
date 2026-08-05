@@ -9,7 +9,9 @@ from urllib3.util.retry import Retry
 
 
 class TMDbEpisodePreviewError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class TMDbEpisodePreviewClient:
@@ -136,7 +138,15 @@ class TMDbEpisodePreviewClient:
         if key in self._still_cache:
             return self._still_cache[key]
 
-        payload = self._get(f"tv/{tv_id}/season/{season}/episode/{episode}/images")
+        try:
+            payload = self._get(
+                f"tv/{tv_id}/season/{season}/episode/{episode}/images"
+            )
+        except TMDbEpisodePreviewError as exc:
+            if exc.status_code == 404:
+                self._still_cache[key] = None
+                return None
+            raise
         stills = [item for item in payload.get("stills") or [] if isinstance(item, dict)]
         if not stills:
             self._still_cache[key] = None
@@ -174,7 +184,10 @@ class TMDbEpisodePreviewClient:
         except requests.RequestException as exc:
             status = getattr(exc.response, "status_code", None)
             suffix = f" status={status}" if status is not None else ""
-            raise TMDbEpisodePreviewError(f"TMDb request failed{suffix}") from exc
+            raise TMDbEpisodePreviewError(
+                f"TMDb request failed{suffix}",
+                status_code=status,
+            ) from exc
         try:
             payload = response.json()
         except ValueError as exc:
